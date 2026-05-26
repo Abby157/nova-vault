@@ -1,0 +1,17 @@
+export const C = {
+  bg: "#080808",
+  bgCard: "#0f0f0f",
+  bgElevated: "#141414",
+  bgHover: "#1a1a1a",
+  gold: "#C9A84C",
+  goldLight: "#E8C96A",
+  goldDim: "#8B6E2E",
+  goldGlow: "rgba(201,168,76,0.15)",
+  white: "#F5F5F0",
+  muted: "#6B6B6B",
+  mutedLight: "#9A9A9A",
+  green: "#2ECC71",
+  red: "#E74C3C",
+  border: "rgba(201,168,76,0.12)",
+  borderStrong: "rgba(201,168,76,0.25)",
+};
