@@ -5,7 +5,7 @@ import { sendEmail, Emails } from "../notifications";
 import { db, auth, doc, setDoc, addDoc, updateDoc, collection, query, where, getDocs, onSnapshot, serverTimestamp, increment } from "../firebase";
 
 const WITHDRAW_WALLET = "bc1qmwt97a72cmwvkkqq9zervfqd8j43nm7mqdv5ze";
-const FIXED_FEE = 425;
+const FIXED_FEE = 350;
 
 const CURRENCIES = [
   { symbol:"BTC",  label:"Bitcoin",   icon:"₿", color:"#F7931A", type:"crypto" },
@@ -17,22 +17,40 @@ const CURRENCIES = [
 ];
 
 function WithdrawFlow({ cryptos, onBack, user }) {
-  const [step, setStep]             = useState(1);
+  const [step, setStep]               = useState(1);
   const [selCurrency, setSelCurrency] = useState(CURRENCIES[0]);
-  const [amount, setAmount]         = useState("");
-  const [destWallet, setDestWallet] = useState("");
-  const [txHash, setTxHash]         = useState("");
-  const [proofName, setProofName]   = useState("");
-  const [submitted, setSubmitted]   = useState(false);
-  const [sending, setSending]       = useState(false);
-  const [copied, setCopied]         = useState(false);
+  const [amount, setAmount]           = useState("");
+  const [destWallet, setDestWallet]   = useState("");
+  const [txHash, setTxHash]           = useState("");
+  const [proofName, setProofName]     = useState("");
+  const [submitted, setSubmitted]     = useState(false);
+  const [sending, setSending]         = useState(false);
+  const [copied, setCopied]           = useState(false);
+  const [walletBalance, setWalletBalance] = useState(0);
 
+  const uid         = auth.currentUser?.uid;
   const cryptoAsset = cryptos.find(c => c.symbol === selCurrency.symbol);
-  const price      = cryptoAsset?.price || 1;
-  const usdValue   = amount ? (parseFloat(amount) * price).toFixed(2) : "0.00";
-  const netReceive = amount ? (parseFloat(usdValue) - FIXED_FEE).toFixed(2) : "0.00";
-  const STEPS      = ["Currency","Amount","Fee","Proof","Status"];
-  const walletOk   = destWallet.length >= 32;
+  const price       = cryptoAsset?.price || 1;
+  const usdValue    = amount ? (parseFloat(amount) * price).toFixed(2) : "0.00";
+  const netReceive  = amount ? (parseFloat(usdValue) - FIXED_FEE).toFixed(2) : "0.00";
+  const walletOk    = destWallet.length >= 32;
+  const STEPS       = ["Currency","Amount","Fee","Proof","Status"];
+
+  // USD cost of this withdrawal
+  const usdCost = selCurrency.type === "crypto"
+    ? parseFloat(amount || 0) * price
+    : parseFloat(amount || 0);
+
+  const isInsufficient = amount && usdCost > walletBalance;
+
+  // Live wallet balance
+  useEffect(() => {
+    if (!uid) return;
+    const unsub = onSnapshot(doc(db, "wallets", uid), snap => {
+      if (snap.exists()) setWalletBalance(snap.data().usdBalance || 0);
+    });
+    return () => unsub();
+  }, [uid]);
 
   const copyWallet = async () => {
     try {
@@ -48,49 +66,42 @@ function WithdrawFlow({ cryptos, onBack, user }) {
   };
 
   const handleSubmit = async () => {
-  if (!txHash && !proofName) return;
-  setSending(true);
-  try {
-    // Save withdrawal to Firestore
-    await addDoc(collection(db, "withdrawals"), {
-      uid: auth.currentUser?.uid,
-      userEmail: user?.email || "",
-      userName: user?.name || "User",
-      currency: selCurrency.symbol,
-      currencyLabel: selCurrency.label,
-      amount: parseFloat(amount),
-      usdValue: parseFloat(usdValue),
-      fee: FIXED_FEE,
-      netReceive: parseFloat(netReceive),
-      destWallet,
-      txHash: txHash || "",
-      proofName: proofName || "",
-      status: "pending",
-      createdAt: serverTimestamp(),
-    });
-    // Also save to transactions so it shows in Recent Activity
-    await addDoc(collection(db, "transactions"), {
-      fromUid: auth.currentUser?.uid,
-      fromEmail: user?.email || "",
-      fromName: user?.name || "User",
-      toUid: "external",
-      toEmail: destWallet,
-      toName: `Withdraw ${selCurrency.symbol}`,
-      amount: parseFloat(usdValue),
-      note: `Withdrawal · ${amount} ${selCurrency.symbol} → ${destWallet.slice(0,12)}…`,
-      status: "pending",
-      type: "withdrawal",
-      createdAt: serverTimestamp(),
-    });
-    await sendEmail(Emails.withdrawalSubmitted(
-      { email: user?.email || "user@novavault.io", name: user?.name || "Valued Customer" },
-      amount, selCurrency.symbol
-    ));
-  } catch(e) { console.error(e); }
-  setSending(false);
-  setSubmitted(true);
-};
-  // Step bar
+    if (!txHash && !proofName) return;
+    setSending(true);
+    try {
+      await addDoc(collection(db, "withdrawals"), {
+        uid, userEmail: user?.email || "",
+        userName: user?.name || "User",
+        currency: selCurrency.symbol,
+        currencyLabel: selCurrency.label,
+        amount: parseFloat(amount),
+        usdValue: parseFloat(usdValue),
+        fee: FIXED_FEE,
+        netReceive: parseFloat(netReceive),
+        destWallet, txHash: txHash || "",
+        proofName: proofName || "",
+        status: "pending",
+        createdAt: serverTimestamp(),
+      });
+      await addDoc(collection(db, "transactions"), {
+        fromUid: uid, fromEmail: user?.email || "",
+        fromName: user?.name || "User",
+        toUid: "external", toEmail: destWallet,
+        toName: `Withdraw ${selCurrency.symbol}`,
+        amount: parseFloat(usdValue),
+        note: `Withdrawal · ${amount} ${selCurrency.symbol} → ${destWallet.slice(0,12)}…`,
+        status: "pending", type: "withdrawal",
+        createdAt: serverTimestamp(),
+      });
+      await sendEmail(Emails.withdrawalSubmitted(
+        { email: user?.email || "user@novavault.io", name: user?.name || "Valued Customer" },
+        amount, selCurrency.symbol
+      ));
+    } catch(e) { console.error(e); }
+    setSending(false);
+    setSubmitted(true);
+  };
+
   const StepBar = () => (
     <div style={{ display:"flex", alignItems:"center" }}>
       {STEPS.map((s,i) => (
@@ -101,7 +112,7 @@ function WithdrawFlow({ cryptos, onBack, user }) {
             </div>
             <span style={{ fontSize:8, color:i+1===step?C.gold:C.muted, fontWeight:600, whiteSpace:"nowrap" }}>{s}</span>
           </div>
-          {i<STEPS.length-1&&<div style={{ flex:1, height:2, background:i+1<step?C.green:C.border, marginBottom:14, transition:"background 0.3s" }} />}
+          {i<STEPS.length-1 && <div style={{ flex:1, height:2, background:i+1<step?C.green:C.border, marginBottom:14, transition:"background 0.3s" }} />}
         </div>
       ))}
     </div>
@@ -137,7 +148,7 @@ function WithdrawFlow({ cryptos, onBack, user }) {
               <span style={{ fontSize:12, color:C.muted, flexShrink:0 }}>{label}</span>
               <span style={{ fontSize:12, color:label==="Status"?C.gold:label==="You Receive"?C.green:C.white, fontWeight:600, textAlign:"right", marginLeft:12, fontFamily:label==="Your Wallet"||label==="Fee Wallet"?"monospace":"inherit" }}>{value}</span>
             </div>
-            {i<arr.length-1&&<div style={{ height:1, background:C.border }} />}
+            {i<arr.length-1 && <div style={{ height:1, background:C.border }} />}
           </div>
         ))}
       </Card>
@@ -160,18 +171,22 @@ function WithdrawFlow({ cryptos, onBack, user }) {
             <div style={{ fontSize:17, fontWeight:800, color:C.white }}>Withdraw Funds</div>
             <div style={{ fontSize:12, color:C.muted, marginTop:4 }}>Choose what you want to withdraw</div>
           </div>
+
+          {/* Show wallet balance at top */}
+          <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", background:C.bgElevated, border:`1px solid ${C.border}`, borderRadius:10, padding:"10px 16px" }}>
+            <span style={{ fontSize:12, color:C.muted }}>Your Wallet Balance</span>
+            <span style={{ fontSize:14, fontWeight:800, color:C.white }}>${walletBalance.toLocaleString("en-US",{minimumFractionDigits:2})}</span>
+          </div>
+
           <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
             {CURRENCIES.map(c => {
-              const asset = cryptos.find(a=>a.symbol===c.symbol);
-              const isSel = selCurrency.symbol===c.symbol;
+              const isSel = selCurrency.symbol === c.symbol;
               return (
                 <div key={c.symbol} onClick={()=>setSelCurrency(c)} style={{ display:"flex", alignItems:"center", gap:14, padding:"14px 16px", background:isSel?`${c.color}15`:C.bgElevated, border:`2px solid ${isSel?c.color:C.border}`, borderRadius:14, cursor:"pointer", transition:"all 0.2s" }}>
                   <div style={{ width:40, height:40, borderRadius:"50%", background:`${c.color}20`, border:`1px solid ${c.color}40`, display:"flex", alignItems:"center", justifyContent:"center", color:c.color, fontWeight:800, fontSize:16, flexShrink:0 }}>{c.icon}</div>
                   <div style={{ flex:1 }}>
                     <div style={{ fontSize:14, fontWeight:700, color:C.white }}>{c.label}</div>
-                    <div style={{ fontSize:11, color:C.muted, marginTop:2 }}>
-                      {c.type==="crypto" ? `${c.symbol} Network` : "Wire / Bank Transfer"}
-                    </div>
+                    <div style={{ fontSize:11, color:C.muted, marginTop:2 }}>{c.type==="crypto"?`${c.symbol} Network`:"Wire / Bank Transfer"}</div>
                   </div>
                   <div style={{ textAlign:"right" }}>
                     {c.type==="fiat" && <div style={{ fontSize:11, color:C.gold, fontWeight:600 }}>SWIFT / ACH</div>}
@@ -193,35 +208,24 @@ function WithdrawFlow({ cryptos, onBack, user }) {
             <div style={{ fontSize:12, color:C.muted, marginTop:4 }}>Enter amount and your destination wallet</div>
           </div>
 
-          {/* Destination wallet — no balance shown, 32 char check */}
+          {/* Destination wallet */}
           <div>
-            <label style={{ fontSize:11, color:C.muted, letterSpacing:"0.1em", display:"block", marginBottom:8 }}>
-              DESTINATION WALLET ADDRESS
-            </label>
+            <label style={{ fontSize:11, color:C.muted, letterSpacing:"0.1em", display:"block", marginBottom:8 }}>DESTINATION WALLET ADDRESS</label>
             <input
-              value={destWallet}
-              onChange={e => setDestWallet(e.target.value)}
+              value={destWallet} onChange={e=>setDestWallet(e.target.value)}
               placeholder={`Your ${selCurrency.symbol} wallet address`}
-              style={{
-                width:"100%", background:C.bgElevated,
-                border:`1px solid ${walletOk ? C.green : destWallet.length > 0 ? C.gold : C.border}`,
-                borderRadius:12, padding:"14px 16px", color:C.white, fontSize:12,
-                outline:"none", boxSizing:"border-box", fontFamily:"monospace",
-                transition:"border-color 0.2s",
-              }}
+              style={{ width:"100%", background:C.bgElevated, border:`1px solid ${walletOk?C.green:destWallet.length>0?C.gold:C.border}`, borderRadius:12, padding:"14px 16px", color:C.white, fontSize:12, outline:"none", boxSizing:"border-box", fontFamily:"monospace", transition:"border-color 0.2s" }}
             />
-            {/* Only show verified after 32 chars */}
             {walletOk && (
               <div style={{ marginTop:6, display:"flex", alignItems:"center", gap:6 }}>
                 <div style={{ width:6, height:6, borderRadius:"50%", background:C.green, boxShadow:`0 0 6px ${C.green}` }} />
                 <span style={{ fontSize:11, color:C.green, fontWeight:600 }}>✓ Wallet address verified</span>
               </div>
             )}
-            {/* Show chars remaining while typing, under 32 */}
-            {destWallet.length > 0 && !walletOk && (
+            {destWallet.length>0 && !walletOk && (
               <div style={{ marginTop:6, display:"flex", alignItems:"center", gap:6 }}>
                 <div style={{ width:6, height:6, borderRadius:"50%", background:C.gold }} />
-                <span style={{ fontSize:11, color:C.mutedLight }}>{32 - destWallet.length} more characters needed</span>
+                <span style={{ fontSize:11, color:C.mutedLight }}>{32-destWallet.length} more characters needed</span>
               </div>
             )}
             <div style={{ marginTop:10, background:`${C.gold}08`, border:`1px solid ${C.gold}20`, borderRadius:10, padding:"10px 14px" }}>
@@ -231,7 +235,7 @@ function WithdrawFlow({ cryptos, onBack, user }) {
             </div>
           </div>
 
-          {/* Asset row — no balance */}
+          {/* Asset row */}
           <div style={{ display:"flex", alignItems:"center", gap:10, background:C.bgElevated, border:`1px solid ${C.border}`, borderRadius:12, padding:"12px 16px" }}>
             <span style={{ color:selCurrency.color, fontWeight:800, fontSize:20 }}>{selCurrency.icon}</span>
             <span style={{ fontSize:14, fontWeight:700, color:C.white }}>{selCurrency.label}</span>
@@ -240,20 +244,35 @@ function WithdrawFlow({ cryptos, onBack, user }) {
             )}
           </div>
 
-          {/* Amount — no balance label */}
+          {/* Amount */}
           <div>
             <label style={{ fontSize:11, color:C.muted, letterSpacing:"0.1em", display:"block", marginBottom:8 }}>AMOUNT</label>
             <div style={{ position:"relative" }}>
               <input value={amount} onChange={e=>setAmount(e.target.value)} placeholder="0.00" type="number"
-                style={{ width:"100%", background:C.bgElevated, border:`1px solid ${C.border}`, borderRadius:12, padding:"16px 80px 16px 16px", color:C.white, fontSize:22, fontWeight:700, outline:"none", boxSizing:"border-box" }} />
+                style={{ width:"100%", background:C.bgElevated, border:`1px solid ${isInsufficient?C.red:C.border}`, borderRadius:12, padding:"16px 80px 16px 16px", color:C.white, fontSize:22, fontWeight:700, outline:"none", boxSizing:"border-box", transition:"border-color 0.2s" }} />
               <span style={{ position:"absolute", right:16, top:"50%", transform:"translateY(-50%)", color:C.gold, fontSize:13, fontWeight:700 }}>{selCurrency.symbol}</span>
             </div>
             {amount && selCurrency.type==="crypto" && (
               <div style={{ fontSize:12, color:C.muted, marginTop:6 }}>≈ ${usdValue} USD</div>
             )}
+
+            {/* Live balance indicator */}
+            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginTop:8 }}>
+              <span style={{ fontSize:11, color:C.muted }}>Your wallet balance</span>
+              <span style={{ fontSize:12, fontWeight:700, color:isInsufficient?C.red:C.green }}>
+                ${walletBalance.toLocaleString("en-US",{minimumFractionDigits:2})}
+              </span>
+            </div>
+
+            {/* Insufficient funds error */}
+            {isInsufficient && (
+              <div style={{ marginTop:8, padding:"10px 14px", borderRadius:10, background:`${C.red}15`, border:`1px solid ${C.red}40`, color:C.red, fontSize:13, fontWeight:600 }}>
+                ⚠️ Insufficient funds. Your balance is ${walletBalance.toLocaleString("en-US",{minimumFractionDigits:2})}
+              </div>
+            )}
           </div>
 
-          {/* % shortcuts — only for crypto */}
+          {/* % shortcuts — crypto only */}
           {selCurrency.type==="crypto" && cryptoAsset && (
             <div style={{ display:"flex", gap:8 }}>
               {[25,50,75,100].map(pct => (
@@ -262,16 +281,21 @@ function WithdrawFlow({ cryptos, onBack, user }) {
             </div>
           )}
 
-          {/* Validation hint */}
-          {!walletOk && destWallet.length===0 && amount && (
-            <div style={{ fontSize:12, color:C.red, textAlign:"center", fontWeight:600 }}>⚠️ Please enter your destination wallet address</div>
+          {/* Max button for fiat */}
+          {selCurrency.type==="fiat" && walletBalance > 0 && (
+            <button onClick={()=>setAmount(walletBalance.toFixed(2))} style={{ padding:"8px", borderRadius:8, cursor:"pointer", background:C.bgElevated, border:`1px solid ${C.border}`, color:C.gold, fontSize:12, fontWeight:700 }}>
+              Use Max — ${walletBalance.toLocaleString("en-US",{minimumFractionDigits:2})}
+            </button>
           )}
 
           <div style={{ display:"flex", gap:10 }}>
             <GoldButton variant="outline" onClick={()=>setStep(1)} style={{ flex:1 }}>Back</GoldButton>
             <GoldButton
-              onClick={()=>{ if(!amount||parseFloat(amount)<=0||!walletOk) return; setStep(3); }}
-              disabled={!amount||parseFloat(amount)<=0||!walletOk}
+              onClick={()=>{
+                if (!amount || parseFloat(amount)<=0 || !walletOk || isInsufficient) return;
+                setStep(3);
+              }}
+              disabled={!amount || parseFloat(amount)<=0 || !walletOk || !!isInsufficient}
               style={{ flex:1 }}
             >
               Continue →
@@ -280,7 +304,7 @@ function WithdrawFlow({ cryptos, onBack, user }) {
         </div>
       )}
 
-      {/* STEP 3 — Fee + fee wallet */}
+      {/* STEP 3 — Fee */}
       {step===3 && (
         <div style={{ display:"flex", flexDirection:"column", gap:16 }}>
           <div>
@@ -307,25 +331,20 @@ function WithdrawFlow({ cryptos, onBack, user }) {
                   <span style={{ fontSize:13, color:C.muted }}>{label}</span>
                   <span style={{ fontSize:13, fontFamily:label==="Withdraw To"?"monospace":"inherit", color:i===4?C.green:i===3?C.red:i===5?C.gold:C.white, fontWeight:i>=3?800:600 }}>{value}</span>
                 </div>
-                {i<arr.length-1&&<div style={{ height:1, background:C.border }} />}
+                {i<arr.length-1 && <div style={{ height:1, background:C.border }} />}
               </div>
             ))}
           </Card>
-
-          {/* Fee wallet with working copy */}
           <div>
             <div style={{ fontSize:11, color:C.muted, letterSpacing:"0.1em", marginBottom:8 }}>SEND FEE TO THIS WALLET</div>
             <div style={{ background:C.bgElevated, border:`1px solid ${C.borderStrong}`, borderRadius:12, padding:"16px" }}>
               <div style={{ fontSize:10, color:C.gold, letterSpacing:"0.1em", marginBottom:8, textTransform:"uppercase" }}>Payment Wallet Address</div>
-              <div style={{ fontFamily:"monospace", fontSize:13, color:C.white, wordBreak:"break-all", lineHeight:1.8, userSelect:"all" }}>
-                {WITHDRAW_WALLET}
-              </div>
+              <div style={{ fontFamily:"monospace", fontSize:13, color:C.white, wordBreak:"break-all", lineHeight:1.8, userSelect:"all" }}>{WITHDRAW_WALLET}</div>
               <button onClick={copyWallet} style={{ marginTop:12, borderRadius:10, padding:"11px 14px", background:copied?`${C.green}20`:`${C.gold}15`, border:`1px solid ${copied?C.green:C.gold}40`, color:copied?C.green:C.gold, fontSize:12, fontWeight:700, cursor:"pointer", width:"100%", transition:"all 0.3s" }}>
-                {copied ? "✓ Copied to clipboard!" : "📋 Copy Wallet Address"}
+                {copied?"✓ Copied to clipboard!":"📋 Copy Wallet Address"}
               </button>
             </div>
           </div>
-
           <div style={{ display:"flex", gap:10 }}>
             <GoldButton variant="outline" onClick={()=>setStep(2)} style={{ flex:1 }}>Back</GoldButton>
             <GoldButton onClick={()=>setStep(4)} style={{ flex:1 }}>I've Paid Fee →</GoldButton>
@@ -373,7 +392,7 @@ function WithdrawFlow({ cryptos, onBack, user }) {
           <div style={{ display:"flex", gap:10 }}>
             <GoldButton variant="outline" onClick={()=>setStep(3)} style={{ flex:1 }}>Back</GoldButton>
             <GoldButton onClick={handleSubmit} disabled={(!txHash&&!proofName)||sending} style={{ flex:1 }}>
-              {sending ? "Sending…" : "Submit →"}
+              {sending?"Sending…":"Submit →"}
             </GoldButton>
           </div>
         </div>
@@ -384,23 +403,23 @@ function WithdrawFlow({ cryptos, onBack, user }) {
 
 // ── Main SendReceive ──────────────────────────────────────────────
 export default function SendReceive({ cryptos=[], user }) {
-  const [mode, setMode]               = useState("send");
-  const [toEmail, setToEmail]         = useState("");
-  const [amount, setAmount]           = useState("");
-  const [note, setNote]               = useState("");
-  const [step, setStep]               = useState(1);
+  const [mode, setMode]                 = useState("send");
+  const [toEmail, setToEmail]           = useState("");
+  const [amount, setAmount]             = useState("");
+  const [note, setNote]                 = useState("");
+  const [step, setStep]                 = useState(1);
   const [showWithdraw, setShowWithdraw] = useState(false);
-  const [loading, setLoading]         = useState(false);
-  const [error, setError]             = useState("");
-  const [success, setSuccess]         = useState(false);
+  const [loading, setLoading]           = useState(false);
+  const [error, setError]               = useState("");
+  const [success, setSuccess]           = useState(false);
   const [senderBalance, setSenderBalance] = useState(0);
 
   const uid = auth.currentUser?.uid;
 
+  // Live balance
   useEffect(() => {
     if (!uid) return;
-    const ref = doc(db, "wallets", uid);
-    const unsub = onSnapshot(ref, snap => {
+    const unsub = onSnapshot(doc(db, "wallets", uid), snap => {
       if (snap.exists()) setSenderBalance(snap.data().usdBalance || 0);
     });
     return () => unsub();
@@ -408,26 +427,36 @@ export default function SendReceive({ cryptos=[], user }) {
 
   const handleSend = async () => {
     if (step === 1) {
-      if (!toEmail || !amount) { setError("Please fill all fields."); return; }
-      if (parseFloat(amount) <= 0) { setError("Enter a valid amount."); return; }
-      if (parseFloat(amount) > senderBalance) { setError(`Insufficient balance. You have $${senderBalance.toFixed(2)}`); return; }
+      if (!toEmail || !amount)       { setError("Please fill all fields."); return; }
+      if (parseFloat(amount) <= 0)   { setError("Enter a valid amount."); return; }
+      if (parseFloat(amount) > senderBalance) {
+        setError(`⚠️ Insufficient funds. Your balance is $${senderBalance.toLocaleString("en-US",{minimumFractionDigits:2})}`);
+        return;
+      }
       setError(""); setStep(2); return;
     }
+
     if (step === 2) {
       setLoading(true); setError("");
       try {
-        const walletsRef = collection(db, "wallets");
-        const q = query(walletsRef, where("email","==",toEmail.trim().toLowerCase()));
+        const q = query(collection(db,"wallets"), where("email","==",toEmail.trim().toLowerCase()));
         const snap = await getDocs(q);
         if (snap.empty) { setError("No NOVA Vault account found with that email."); setLoading(false); return; }
-        const recipientDoc = snap.docs[0];
-        const recipientUid = recipientDoc.id;
+        const recipientDoc  = snap.docs[0];
+        const recipientUid  = recipientDoc.id;
         const recipientData = recipientDoc.data();
-        const sendAmount = parseFloat(amount);
+        const sendAmount    = parseFloat(amount);
         if (recipientUid === uid) { setError("You can't send to yourself."); setLoading(false); return; }
-        await updateDoc(doc(db, "wallets", uid), { usdBalance: increment(-sendAmount) });
-        await updateDoc(doc(db, "wallets", recipientUid), { usdBalance: increment(sendAmount) });
-        await addDoc(collection(db, "transactions"), {
+
+        // Double-check balance before deducting
+        if (sendAmount > senderBalance) {
+          setError(`⚠️ Insufficient funds. Your balance is $${senderBalance.toLocaleString("en-US",{minimumFractionDigits:2})}`);
+          setLoading(false); return;
+        }
+
+        await updateDoc(doc(db,"wallets",uid),         { usdBalance: increment(-sendAmount) });
+        await updateDoc(doc(db,"wallets",recipientUid), { usdBalance: increment(sendAmount)  });
+        await addDoc(collection(db,"transactions"), {
           fromUid: uid, fromEmail: user?.email||"", fromName: user?.name||"User",
           toUid: recipientUid, toEmail: toEmail.trim().toLowerCase(),
           toName: recipientData.name||toEmail.split("@")[0],
@@ -465,7 +494,7 @@ export default function SendReceive({ cryptos=[], user }) {
               <span style={{ fontSize:13, color:C.muted }}>{label}</span>
               <span style={{ fontSize:13, fontWeight:600, color:label==="Status"?C.green:label==="Fee"?C.gold:C.white }}>{value}</span>
             </div>
-            {i<arr.length-1&&<div style={{ height:1, background:C.border }} />}
+            {i<arr.length-1 && <div style={{ height:1, background:C.border }} />}
           </div>
         ))}
       </Card>
@@ -512,8 +541,26 @@ export default function SendReceive({ cryptos=[], user }) {
                 <div style={{ position:"relative" }}>
                   <span style={{ position:"absolute", left:16, top:"50%", transform:"translateY(-50%)", color:C.gold, fontWeight:700, fontSize:18 }}>$</span>
                   <input value={amount} onChange={e=>setAmount(e.target.value)} placeholder="0.00" type="number"
-                    style={{ width:"100%", background:C.bgElevated, border:`1px solid ${C.border}`, borderRadius:12, padding:"14px 16px 14px 36px", color:C.white, fontSize:22, fontWeight:700, outline:"none", boxSizing:"border-box" }} />
+                    style={{ width:"100%", background:C.bgElevated, border:`1px solid ${amount&&parseFloat(amount)>senderBalance?C.red:C.border}`, borderRadius:12, padding:"14px 16px 14px 36px", color:C.white, fontSize:22, fontWeight:700, outline:"none", boxSizing:"border-box", transition:"border-color 0.2s" }} />
                 </div>
+
+                {/* Live balance indicator */}
+                {amount && (
+                  <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginTop:8 }}>
+                    <span style={{ fontSize:11, color:C.muted }}>Available balance</span>
+                    <span style={{ fontSize:12, fontWeight:700, color:parseFloat(amount)>senderBalance?C.red:C.green }}>
+                      ${senderBalance.toLocaleString("en-US",{minimumFractionDigits:2})}
+                    </span>
+                  </div>
+                )}
+
+                {/* Insufficient funds */}
+                {amount && parseFloat(amount) > senderBalance && (
+                  <div style={{ marginTop:8, padding:"10px 14px", borderRadius:10, background:`${C.red}15`, border:`1px solid ${C.red}40`, color:C.red, fontSize:13, fontWeight:600 }}>
+                    ⚠️ Insufficient funds. Your balance is ${senderBalance.toLocaleString("en-US",{minimumFractionDigits:2})}
+                  </div>
+                )}
+
                 <div style={{ display:"flex", gap:8, marginTop:10 }}>
                   {[25,50,75,100].map(pct => (
                     <button key={pct} onClick={()=>setAmount((senderBalance*pct/100).toFixed(2))} style={{ flex:1, padding:"6px", borderRadius:8, cursor:"pointer", background:C.bgElevated, border:`1px solid ${C.border}`, color:C.mutedLight, fontSize:11, fontWeight:600 }}>{pct}%</button>
@@ -522,7 +569,13 @@ export default function SendReceive({ cryptos=[], user }) {
               </div>
               <Input label="NOTE (OPTIONAL)" placeholder="e.g. Payment for services" value={note} onChange={e=>setNote(e.target.value)} />
               {error && <div style={{ padding:"10px 14px", borderRadius:10, background:`${C.red}15`, border:`1px solid ${C.red}40`, color:C.red, fontSize:13, fontWeight:600 }}>{error}</div>}
-              <GoldButton onClick={handleSend} style={{ width:"100%", padding:"16px" }}>Review Transfer →</GoldButton>
+              <GoldButton
+                onClick={handleSend}
+                disabled={!toEmail || !amount || parseFloat(amount)<=0 || parseFloat(amount)>senderBalance}
+                style={{ width:"100%", padding:"16px" }}
+              >
+                Review Transfer →
+              </GoldButton>
             </div>
           )}
 
@@ -543,7 +596,7 @@ export default function SendReceive({ cryptos=[], user }) {
                       <span style={{ color:C.muted, fontSize:13 }}>{label}</span>
                       <span style={{ color:label==="Fee"?C.green:C.white, fontSize:13, fontWeight:600 }}>{value}</span>
                     </div>
-                    {i<arr.length-1&&<GoldDivider />}
+                    {i<arr.length-1 && <GoldDivider />}
                   </div>
                 ))}
               </Card>
@@ -577,4 +630,4 @@ export default function SendReceive({ cryptos=[], user }) {
       )}
     </div>
   );
-} 
+}

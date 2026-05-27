@@ -54,6 +54,14 @@ export default function App() {
   const [priceStatus, setPriceStatus] = useState("loading");
   const [toasts, setToasts]           = useState([]);
 
+  useEffect(() => {
+  const savedUser = localStorage.getItem("novaUser");
+
+  if (savedUser) {
+    setUser(JSON.parse(savedUser));
+  }
+}, []);
+
   useEffect(() => { setTimeout(() => setMounted(true), 50); }, []);
 
   useEffect(() => {
