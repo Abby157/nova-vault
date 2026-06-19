@@ -24,7 +24,7 @@ function NavItem({ icon, label, active, onClick, badge }) {
       background:"none", border:"none", cursor:"pointer",
       color:active ? C.gold : C.muted,
       padding:"8px 4px", borderRadius:12, transition:"all 0.2s",
-      position:"relative", minWidth:44,
+      position:"relative", minWidth:44, flex:1,
     }}>
       {active && <div style={{ position:"absolute", top:0, left:"50%", transform:"translateX(-50%)", width:24, height:2, background:C.gold, borderRadius:2, boxShadow:`0 0 8px ${C.gold}` }} />}
       <div style={{ position:"relative" }}>
@@ -55,12 +55,11 @@ export default function App() {
   const [toasts, setToasts]           = useState([]);
 
   useEffect(() => {
-  const savedUser = localStorage.getItem("novaUser");
-
-  if (savedUser) {
-    setUser(JSON.parse(savedUser));
-  }
-}, []);
+    const savedUser = localStorage.getItem("novaUser");
+    if (savedUser) {
+      setUser(JSON.parse(savedUser));
+    }
+  }, []);
 
   useEffect(() => { setTimeout(() => setMounted(true), 50); }, []);
 
@@ -91,8 +90,8 @@ export default function App() {
   };
 
   const goBack = () => {
-  setTab(prevTab);
-};
+    setTab(prevTab);
+  };
 
   const dismissToast = (id) => setToasts(p => p.filter(t => t.id !== id));
 
@@ -126,43 +125,56 @@ export default function App() {
     alerts:    <AlertsScreen cryptos={cryptos} toasts={toasts} setToasts={setToasts} user={user} />,
     settings:  <SettingsScreen onLogout={handleLogout} user={user} />,
     admin:     <AdminScreen user={user} />,
-    support: <SupportScreen user={user} setTab={goTo} />,
+    support:   <SupportScreen user={user} setTab={goTo} />,
   };
 
   return (
     <div style={{
-      background:C.bg, minHeight:"100vh", maxWidth:420, margin:"0 auto",
+      background:C.bg,
+      minHeight:"100vh",
+      minHeight:"100dvh",
+      width:"100%",
+      maxWidth:480,
+      margin:"0 auto",
       fontFamily:"'SF Pro Display',-apple-system,BlinkMacSystemFont,sans-serif",
-      color:C.white, opacity:mounted?1:0, transition:"opacity 0.5s",
+      color:C.white,
+      opacity:mounted?1:0,
+      transition:"opacity 0.5s",
+      position:"relative",
+      overflowX:"hidden",
     }}>
       <ToastContainer toasts={toasts} onDismiss={dismissToast} />
 
       {/* Header */}
-      <div style={{ position:"sticky", top:0, zIndex:100, background:"rgba(8,8,8,0.92)", backdropFilter:"blur(20px)", padding:"16px 24px 12px", borderBottom:`1px solid ${C.border}` }}>
+      <div style={{
+        position:"sticky", top:0, zIndex:100,
+        background:"rgba(8,8,8,0.92)", backdropFilter:"blur(20px)",
+        padding:"calc(16px + env(safe-area-inset-top)) 20px 12px",
+        borderBottom:`1px solid ${C.border}`,
+      }}>
         <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
           <div>
             {title ? (
               <div style={{ display:"flex", alignItems:"center", gap:10 }}>
-<button
-  onClick={() => {
-  if (tab === "support" && window.supportChatOpen) {
-    window.supportCloseChat();
-    return;
-  }
-
-  goBack();
-}}
-  style={{
-    background:"none",
-    border:"none",
-    color:C.gold,
-    fontSize:18,
-    cursor:"pointer",
-    padding:0
-  }}
->
-  ←
-</button>  
+                <button
+                  onClick={() => {
+                    if (tab === "support" && window.supportChatOpen) {
+                      window.supportCloseChat();
+                      return;
+                    }
+                    goBack();
+                  }}
+                  style={{
+                    background:"none",
+                    border:"none",
+                    color:C.gold,
+                    fontSize:18,
+                    cursor:"pointer",
+                    padding:0,
+                  }}
+                >
+                  ←
+                </button>
                 <span style={{ fontSize:18, fontWeight:800, color:C.white }}>{title}</span>
               </div>
             ) : (
@@ -175,12 +187,12 @@ export default function App() {
               </>
             )}
           </div>
-          <div style={{ display:"flex", alignItems:"center", gap:10 }}>
-            <div style={{ display:"flex", alignItems:"center", gap:5, background:C.bgElevated, border:`1px solid ${C.border}`, borderRadius:20, padding:"4px 10px" }}>
+          <div style={{ display:"flex", alignItems:"center", gap:8, flexShrink:0 }}>
+            <div style={{ display:"flex", alignItems:"center", gap:5, background:C.bgElevated, border:`1px solid ${C.border}`, borderRadius:20, padding:"4px 8px" }}>
               <div style={{ width:6, height:6, borderRadius:"50%", background:priceStatus==="live"?C.green:priceStatus==="error"?C.red:C.gold, boxShadow:`0 0 6px ${priceStatus==="live"?C.green:priceStatus==="error"?C.red:C.gold}` }} />
               <span style={{ fontSize:9, color:C.muted, letterSpacing:"0.08em" }}>{priceStatus==="live"?"LIVE":priceStatus==="error"?"OFFLINE":"LOADING"}</span>
             </div>
-            <div onClick={() => goTo("settings")} style={{ width:38, height:38, borderRadius:"50%", background:`linear-gradient(135deg,${C.gold},${C.goldDim})`, display:"flex", alignItems:"center", justifyContent:"center", fontSize:13, fontWeight:800, color:"#000", cursor:"pointer", flexShrink:0 }}>{initials}</div>
+            <div onClick={() => goTo("settings")} style={{ width:36, height:36, borderRadius:"50%", background:`linear-gradient(135deg,${C.gold},${C.goldDim})`, display:"flex", alignItems:"center", justifyContent:"center", fontSize:13, fontWeight:800, color:"#000", cursor:"pointer", flexShrink:0 }}>{initials}</div>
           </div>
         </div>
         {!title && user?.name && (
@@ -191,12 +203,20 @@ export default function App() {
       </div>
 
       {/* Screen */}
-      <div style={{ padding:"24px 20px 110px" }}>
+      <div style={{ padding:"20px 16px calc(100px + env(safe-area-inset-bottom))" }}>
         {SCREEN_MAP[tab] || SCREEN_MAP.dashboard}
       </div>
 
       {/* Bottom Nav */}
-      <div style={{ position:"fixed", bottom:0, left:"50%", transform:"translateX(-50%)", width:"100%", maxWidth:420, background:"rgba(8,8,8,0.96)", backdropFilter:"blur(20px)", borderTop:`1px solid ${C.border}`, display:"flex", justifyContent:"space-around", padding:"8px 0 20px", zIndex:100 }}>
+      <div style={{
+        position:"fixed", bottom:0, left:"50%", transform:"translateX(-50%)",
+        width:"100%", maxWidth:480,
+        background:"rgba(8,8,8,0.96)", backdropFilter:"blur(20px)",
+        borderTop:`1px solid ${C.border}`,
+        display:"flex", justifyContent:"space-around",
+        padding:"8px 4px calc(16px + env(safe-area-inset-bottom))",
+        zIndex:100,
+      }}>
         {NAV_TABS.map(t => (
           <NavItem key={t.id} icon={t.icon} label={t.label} active={tab===t.id} onClick={() => goTo(t.id)} badge={t.id==="alerts"?toasts.length:0} />
         ))}
