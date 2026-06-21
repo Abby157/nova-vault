@@ -12,6 +12,12 @@ const BOT_REPLIES = [
   "Message received! We'll reach out to you as soon as possible.",
 ];
 
+function Badge({ children, color = C.gold }) {
+  return (
+    <span style={{ fontSize:10, fontWeight:700, letterSpacing:"0.08em", padding:"2px 8px", borderRadius:20, background:`${color}20`, color, border:`1px solid ${color}40`, textTransform:"uppercase" }}>{children}</span>
+  );
+}
+
 export default function SupportScreen({ user, setTab }) {
   const [messages, setMessages] = useState([]);
   const [input, setInput]       = useState("");
@@ -21,17 +27,18 @@ export default function SupportScreen({ user, setTab }) {
   const bottomRef = useRef(null);
   const uid = auth.currentUser?.uid;
   const isAdmin = user?.email?.toLowerCase() === SUPPORT_EMAIL.toLowerCase();
+
   useEffect(() => {
-  window.supportChatOpen = showChat;
+    window.supportChatOpen = showChat;
 
-  window.supportCloseChat = () => {
-    setShowChat(false);
-  };
+    window.supportCloseChat = () => {
+      setShowChat(false);
+    };
 
-  return () => {
-    window.supportChatOpen = false;
-  };
-}, [showChat]);
+    return () => {
+      window.supportChatOpen = false;
+    };
+  }, [showChat]);
 
   // Load messages for this user (or all if admin)
   useEffect(() => {
@@ -126,14 +133,24 @@ export default function SupportScreen({ user, setTab }) {
           <div style={{ fontSize:12, color:C.muted, marginBottom:10, textAlign:"center" }}>What do you need help with?</div>
           <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:8 }}>
             {CATEGORIES.map(cat => (
-              <button key={cat.id} onClick={() => {
-  setCategory(cat.id);
-  setShowChat(true);
-}}
+              <button
+                key={cat.id}
+                onClick={() => {
+                  setCategory(cat.id);
+                  setShowChat(true);
+                }}
+                style={{
+                  display:"flex", alignItems:"center", gap:8,
+                  padding:"14px 16px", borderRadius:12,
+                  background:C.bgElevated, border:`1px solid ${C.border}`,
+                  color:C.white, fontSize:13, fontWeight:600,
+                  cursor:"pointer", transition:"all 0.2s",
+                }}
                 onMouseEnter={e => { e.currentTarget.style.borderColor=C.gold; e.currentTarget.style.background=C.bgHover; }}
                 onMouseLeave={e => { e.currentTarget.style.borderColor=C.border; e.currentTarget.style.background=C.bgElevated; }}
               >
-                <span style={{ fontSize:20 }}>{cat.icon}</span>{cat.label.split(" ")[1]}
+                <span style={{ fontSize:20 }}>{cat.icon}</span>
+                <span>{cat.label.split(" ")[1]}</span>
               </button>
             ))}
           </div>
@@ -143,7 +160,7 @@ export default function SupportScreen({ user, setTab }) {
       {/* Messages */}
       <div style={{ flex:1, overflowY:"auto", display:"flex", flexDirection:"column", gap:12, paddingBottom:8 }}>
         {/* Welcome message */}
-        !showChat && (
+        {!showChat && category && (
           <div style={{ display:"flex", justifyContent:"flex-start" }}>
             <div style={{ maxWidth:"80%" }}>
               <div style={{ fontSize:10, color:C.muted, marginBottom:4, marginLeft:4 }}>NOVA Support</div>
@@ -156,7 +173,7 @@ export default function SupportScreen({ user, setTab }) {
               </div>
             </div>
           </div>
-        )
+        )}
 
         {messages.map((msg, i) => {
           const isMe = !msg.isSupport;
@@ -216,11 +233,5 @@ export default function SupportScreen({ user, setTab }) {
         </div>
       )}
     </div>
-  );
-}
-
-function Badge({ children, color = C.gold }) {
-  return (
-    <span style={{ fontSize:10, fontWeight:700, letterSpacing:"0.08em", padding:"2px 8px", borderRadius:20, background:`${color}20`, color, border:`1px solid ${color}40`, textTransform:"uppercase" }}>{children}</span>
   );
 }
