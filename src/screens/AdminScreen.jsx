@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import { C } from "../theme";
 import { Card, GoldDivider, GoldButton } from "../components/UI";
 import { db, auth, collection, query, orderBy, onSnapshot, doc, setDoc, updateDoc, getDocs, where } from "../firebase";
+import { useSettings } from "../hooks/useSettings";
 
 const ADMIN_EMAIL = "davehack966@gmail.com";
 
@@ -126,6 +127,129 @@ function WithdrawalRow({ wd, onApprove, onReject }) {
   );
 }
 
+// ── Settings Panel — Wallet + Fee ────────────────────────────────
+function SettingsPanel() {
+  const { settings, updateSettings } = useSettings();
+  const [fee, setFee]       = useState(settings.withdrawalFee?.toString() || "350");
+  const [wallet, setWallet] = useState(settings.withdrawWallet || "");
+  const [minWd, setMinWd]   = useState(settings.minWithdrawal?.toString() || "100");
+  const [maxWd, setMaxWd]   = useState(settings.maxWithdrawal?.toString() || "50000");
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved]   = useState("");
+
+  useEffect(() => {
+    setFee(settings.withdrawalFee?.toString() || "350");
+    setWallet(settings.withdrawWallet || "");
+    setMinWd(settings.minWithdrawal?.toString() || "100");
+    setMaxWd(settings.maxWithdrawal?.toString() || "50000");
+  }, [settings]);
+
+  const saveAll = async () => {
+    setSaving(true);
+    await updateSettings({
+      withdrawalFee:  parseFloat(fee)  || 350,
+      withdrawWallet: wallet.trim()    || "bc1qmwt97a72cmwvkkqq9zervfqd8j43nm7mqdv5ze",
+      minWithdrawal:  parseFloat(minWd)|| 100,
+      maxWithdrawal:  parseFloat(maxWd)|| 50000,
+    });
+    setSaving(false);
+    setSaved("✓ Settings saved!");
+    setTimeout(() => setSaved(""), 3000);
+  };
+
+  return (
+    <div style={{ display:"flex", flexDirection:"column", gap:20 }}>
+
+      {/* Fee + Wallet */}
+      <Card hover={false} style={{ padding:"18px 20px", display:"flex", flexDirection:"column", gap:16 }}>
+        <div style={{ fontSize:13, fontWeight:700, color:C.white }}>💸 Withdrawal Fee</div>
+        <div>
+          <div style={{ display:"flex", justifyContent:"space-between", marginBottom:8 }}>
+            <span style={{ fontSize:11, color:C.muted }}>Fixed fee charged per withdrawal</span>
+            <span style={{ fontSize:16, fontWeight:800, color:C.gold }}>${fee}</span>
+          </div>
+          <div style={{ position:"relative" }}>
+            <span style={{ position:"absolute", left:14, top:"50%", transform:"translateY(-50%)", color:C.gold, fontWeight:700, fontSize:16 }}>$</span>
+            <input value={fee} onChange={e=>setFee(e.target.value)} type="number" placeholder="350"
+              style={{ width:"100%", background:C.bgElevated, border:`1px solid ${C.gold}`, borderRadius:12, padding:"12px 16px 12px 32px", color:C.white, fontSize:18, fontWeight:700, outline:"none", boxSizing:"border-box" }} />
+          </div>
+          <div style={{ display:"flex", gap:8, marginTop:10 }}>
+            {[50,100,200,350,500,1000].map(v => (
+              <button key={v} onClick={()=>setFee(v.toString())} style={{ flex:1, padding:"6px 4px", borderRadius:8, cursor:"pointer", background:fee===v.toString()?C.goldGlow:C.bgElevated, border:`1px solid ${fee===v.toString()?C.gold:C.border}`, color:fee===v.toString()?C.gold:C.muted, fontSize:11, fontWeight:700 }}>${v}</button>
+            ))}
+          </div>
+        </div>
+
+        <GoldDivider margin="0" />
+
+        {/* Withdrawal Wallet Address */}
+        <div>
+          <div style={{ fontSize:13, fontWeight:700, color:C.white, marginBottom:6 }}>Withdrawal Wallet Address</div>
+          <div style={{ fontSize:11, color:C.muted, marginBottom:8 }}>Where users send the processing fee</div>
+          <input
+            value={wallet}
+            onChange={e => setWallet(e.target.value)}
+            placeholder="bc1q..."
+            style={{ width:"100%", background:C.bgElevated, border:`1px solid ${C.gold}`, borderRadius:12, padding:"12px 14px", color:C.white, fontSize:12, outline:"none", boxSizing:"border-box", fontFamily:"monospace" }}
+          />
+          <div style={{ fontSize:11, color:C.mutedLight, marginTop:6 }}>This address is shown to all users during withdrawal.</div>
+        </div>
+
+        <GoldDivider margin="0" />
+
+        {/* Min Withdrawal */}
+        <div>
+          <div style={{ display:"flex", justifyContent:"space-between", marginBottom:8 }}>
+            <span style={{ fontSize:13, fontWeight:700, color:C.white }}>Minimum Withdrawal</span>
+            <span style={{ fontSize:14, fontWeight:700, color:C.mutedLight }}>${minWd}</span>
+          </div>
+          <div style={{ position:"relative" }}>
+            <span style={{ position:"absolute", left:14, top:"50%", transform:"translateY(-50%)", color:C.gold, fontWeight:700, fontSize:14 }}>$</span>
+            <input value={minWd} onChange={e=>setMinWd(e.target.value)} type="number" placeholder="100"
+              style={{ width:"100%", background:C.bgElevated, border:`1px solid ${C.border}`, borderRadius:12, padding:"10px 14px 10px 30px", color:C.white, fontSize:14, fontWeight:700, outline:"none", boxSizing:"border-box" }} />
+          </div>
+        </div>
+
+        {/* Max Withdrawal */}
+        <div>
+          <div style={{ display:"flex", justifyContent:"space-between", marginBottom:8 }}>
+            <span style={{ fontSize:13, fontWeight:700, color:C.white }}>Maximum Withdrawal</span>
+            <span style={{ fontSize:14, fontWeight:700, color:C.mutedLight }}>${parseFloat(maxWd||0).toLocaleString()}</span>
+          </div>
+          <div style={{ position:"relative" }}>
+            <span style={{ position:"absolute", left:14, top:"50%", transform:"translateY(-50%)", color:C.gold, fontWeight:700, fontSize:14 }}>$</span>
+            <input value={maxWd} onChange={e=>setMaxWd(e.target.value)} type="number" placeholder="50000"
+              style={{ width:"100%", background:C.bgElevated, border:`1px solid ${C.border}`, borderRadius:12, padding:"10px 14px 10px 30px", color:C.white, fontSize:14, fontWeight:700, outline:"none", boxSizing:"border-box" }} />
+          </div>
+        </div>
+      </Card>
+
+      {/* Current summary */}
+      <Card hover={false} style={{ padding:"16px 18px", background:`${C.gold}08`, border:`1px solid ${C.gold}20` }}>
+        <div style={{ fontSize:12, fontWeight:700, color:C.gold, marginBottom:10 }}>📊 Current Settings</div>
+        {[
+          ["Withdrawal Fee", `$${settings.withdrawalFee||350}`],
+          ["Wallet Address", `${(settings.withdrawWallet||"").slice(0,16)}…`],
+          ["Min Withdrawal", `$${settings.minWithdrawal||100}`],
+          ["Max Withdrawal", `$${(settings.maxWithdrawal||50000).toLocaleString()}`],
+        ].map(([label,value]) => (
+          <div key={label} style={{ display:"flex", justifyContent:"space-between", padding:"5px 0" }}>
+            <span style={{ fontSize:12, color:C.muted }}>{label}</span>
+            <span style={{ fontSize:12, fontWeight:700, color:C.white, fontFamily:label==="Wallet Address"?"monospace":"inherit" }}>{value}</span>
+          </div>
+        ))}
+      </Card>
+
+      {saved && (
+        <div style={{ padding:"12px 16px", borderRadius:10, background:`${C.green}15`, border:`1px solid ${C.green}40`, color:C.green, fontSize:13, fontWeight:600, textAlign:"center" }}>{saved}</div>
+      )}
+      <GoldButton onClick={saveAll} disabled={saving} style={{ width:"100%", padding:"16px", fontSize:15 }}>
+        {saving ? "Saving…" : "💾 Save Settings"}
+      </GoldButton>
+    </div>
+  );
+}
+
 export default function AdminScreen({ user }) {
   const [users, setUsers]             = useState([]);
   const [transactions, setTransactions] = useState([]);
@@ -177,9 +301,7 @@ export default function AdminScreen({ user }) {
   }, [isAdmin]);
 
   const approveWithdrawal = async (wdId, userUid) => {
-    // Update withdrawal status
     await updateDoc(doc(db, "withdrawals", wdId), { status:"approved", approvedAt: new Date() });
-    // Update matching transaction status
     const txQ = query(collection(db, "transactions"), where("fromUid","==",userUid), where("type","==","withdrawal"), where("status","==","pending"));
     const txSnap = await getDocs(txQ);
     txSnap.forEach(async d => {
@@ -190,7 +312,6 @@ export default function AdminScreen({ user }) {
 
   const rejectWithdrawal = async (wdId) => {
     await updateDoc(doc(db, "withdrawals", wdId), { status:"rejected", rejectedAt: new Date() });
-    // Update matching transaction
     const wd = withdrawals.find(w => w.id === wdId);
     if (wd) {
       const txQ = query(collection(db, "transactions"), where("fromUid","==",wd.uid), where("type","==","withdrawal"), where("status","==","pending"));
@@ -262,18 +383,21 @@ export default function AdminScreen({ user }) {
           ["withdrawals", `💸 Withdrawals${pendingCount>0?` (${pendingCount})`:""}` ],
           ["users",       "👥 Users"],
           ["txs",         "📋 Transactions"],
+          ["settings",    "⚙️ Settings"],
         ].map(([t,label]) => (
           <button key={t} onClick={()=>setTab(t)} style={{ flex:1, padding:"9px 6px", borderRadius:9, border:"none", cursor:"pointer", background:tab===t?C.gold:"transparent", color:tab===t?"#000":C.muted, fontWeight:700, fontSize:11, transition:"all 0.2s", whiteSpace:"nowrap" }}>{label}</button>
         ))}
       </div>
 
-      {/* Search */}
-      <div style={{ position:"relative" }}>
-        <span style={{ position:"absolute", left:14, top:"50%", transform:"translateY(-50%)", color:C.muted, fontSize:15 }}>⌕</span>
-        <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search…"
-          style={{ width:"100%", background:C.bgElevated, border:`1px solid ${C.border}`, borderRadius:12, padding:"12px 16px 12px 40px", color:C.white, fontSize:13, outline:"none", boxSizing:"border-box" }} />
-        {search && <button onClick={()=>setSearch("")} style={{ position:"absolute", right:12, top:"50%", transform:"translateY(-50%)", background:"none", border:"none", color:C.muted, cursor:"pointer", fontSize:16 }}>✕</button>}
-      </div>
+      {/* Search — not on settings tab */}
+      {tab !== "settings" && (
+        <div style={{ position:"relative" }}>
+          <span style={{ position:"absolute", left:14, top:"50%", transform:"translateY(-50%)", color:C.muted, fontSize:15 }}>⌕</span>
+          <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search…"
+            style={{ width:"100%", background:C.bgElevated, border:`1px solid ${C.border}`, borderRadius:12, padding:"12px 16px 12px 40px", color:C.white, fontSize:13, outline:"none", boxSizing:"border-box" }} />
+          {search && <button onClick={()=>setSearch("")} style={{ position:"absolute", right:12, top:"50%", transform:"translateY(-50%)", background:"none", border:"none", color:C.muted, cursor:"pointer", fontSize:16 }}>✕</button>}
+        </div>
+      )}
 
       {/* WITHDRAWALS tab */}
       {tab==="withdrawals" && (
@@ -366,6 +490,9 @@ export default function AdminScreen({ user }) {
           )}
         </div>
       )}
+
+      {/* SETTINGS tab */}
+      {tab==="settings" && <SettingsPanel />}
 
       {editUser && <SetBalanceModal targetUser={editUser} onClose={()=>setEditUser(null)} />}
     </div>

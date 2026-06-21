@@ -4,8 +4,7 @@ import { Card, GoldButton, GoldDivider, Input } from "../components/UI";
 import { sendEmail, Emails } from "../notifications";
 import { db, auth, doc, setDoc, addDoc, updateDoc, collection, query, where, getDocs, onSnapshot, serverTimestamp, increment } from "../firebase";
 
-const WITHDRAW_WALLET = "bc1qmwt97a72cmwvkkqq9zervfqd8j43nm7mqdv5ze";
-const FIXED_FEE = 350;
+import { useSettings } from "../hooks/useSettings";
 
 const CURRENCIES = [
   { symbol:"BTC",  label:"Bitcoin",   icon:"₿", color:"#F7931A", type:"crypto" },
@@ -17,6 +16,9 @@ const CURRENCIES = [
 ];
 
 function WithdrawFlow({ cryptos, onBack, user }) {
+  const { settings } = useSettings();
+  const WITHDRAW_WALLET = settings.withdrawWallet;
+  const FIXED_FEE = settings.withdrawalFee;
   const [step, setStep]               = useState(1);
   const [selCurrency, setSelCurrency] = useState(CURRENCIES[0]);
   const [amount, setAmount]           = useState("");
