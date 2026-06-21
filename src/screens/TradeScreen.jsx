@@ -1,6 +1,5 @@
 import { useState, useEffect } from "react";
 import { C } from "../theme";
-import { CHART_DATA } from "../data";
 import { Card, GoldButton } from "../components/UI";
 import { db, auth, doc, onSnapshot, updateDoc, addDoc, collection, serverTimestamp, increment } from "../firebase";
 
@@ -70,6 +69,7 @@ export default function TradeScreen({ cryptos=[] }) {
   const [interval, setIntervalV]  = useState("1D");
   const [candles, setCandles]     = useState([]);
   const [balance, setBalance]     = useState(0);
+  const [holdings, setHoldings]   = useState({});
   const [loading, setLoading]     = useState(false);
   const [success, setSuccess]     = useState("");
   const [error, setError]         = useState("");
@@ -86,7 +86,10 @@ export default function TradeScreen({ cryptos=[] }) {
   useEffect(() => {
     if (!uid) return;
     const unsub = onSnapshot(doc(db, "wallets", uid), snap => {
-      if (snap.exists()) setBalance(snap.data().usdBalance || 0);
+      if (snap.exists()) {
+        setBalance(snap.data().usdBalance || 0);
+        setHoldings(snap.data().holdings || {});
+      }
     });
     return () => unsub();
   }, [uid]);
@@ -100,13 +103,14 @@ export default function TradeScreen({ cryptos=[] }) {
     <div style={{ textAlign:"center", padding:"60px 0", color:C.muted }}>Loading market data…</div>
   );
 
-  const toAmount    = amount ? ((parseFloat(amount) * fromAsset.price) / toAsset.price).toFixed(6) : "";
-  const usdCost     = amount ? (parseFloat(amount) * fromAsset.price).toFixed(2) : "0.00";
-  const rate        = (fromAsset.price / toAsset.price).toFixed(6);
-  const lastCandle  = candles[candles.length - 1];
-  const firstCandle = candles[0];
-  const priceChange = lastCandle && firstCandle ? ((lastCandle.close - firstCandle.open) / firstCandle.open * 100).toFixed(2) : 0;
-  const isUp        = parseFloat(priceChange) >= 0;
+  const fromHolding = holdings[fromAsset.symbol] || 0;
+  const toAmount     = amount ? ((parseFloat(amount) * fromAsset.price) / toAsset.price).toFixed(6) : "";
+  const usdCost      = amount ? (parseFloat(amount) * fromAsset.price).toFixed(2) : "0.00";
+  const rate         = (fromAsset.price / toAsset.price).toFixed(6);
+  const lastCandle   = candles[candles.length - 1];
+  const firstCandle  = candles[0];
+  const priceChange  = lastCandle && firstCandle ? ((lastCandle.close - firstCandle.open) / firstCandle.open * 100).toFixed(2) : 0;
+  const isUp         = parseFloat(priceChange) >= 0;
 
   const swapAssets = () => {
     const tmp = fromAsset; setFromAsset(toAsset); setToAsset(tmp);
@@ -116,13 +120,40 @@ export default function TradeScreen({ cryptos=[] }) {
   const handleTrade = async () => {
     if (!amount || parseFloat(amount) <= 0) { setError("Enter an amount."); return; }
     const cost = parseFloat(usdCost);
-    if (cost > balance) { setError(`Insufficient balance. You have $${balance.toFixed(2)} USD.`); return; }
+
+    // For "buy" — deduct USD, credit crypto
+    // For "sell" — deduct crypto holding, credit USD
+    // For "swap" — deduct fromAsset holding (or USD if fromAsset is USD type), credit toAsset
+
+    if (activeTab === "sell") {
+      if (parseFloat(amount) > fromHolding) {
+        setError(`Insufficient ${fromAsset.symbol}. You have ${fromHolding} ${fromAsset.symbol}.`);
+        return;
+      }
+    } else {
+      if (cost > balance) { setError(`Insufficient balance. You have $${balance.toFixed(2)} USD.`); return; }
+    }
 
     setLoading(true); setError(""); setSuccess("");
     try {
-      // Deduct USD balance
-      await updateDoc(doc(db, "wallets", uid), { usdBalance: increment(-cost) });
-      // Record transaction
+      const updates = {};
+
+      if (activeTab === "buy") {
+        // Deduct USD, credit crypto holding
+        updates.usdBalance = increment(-cost);
+        updates[`holdings.${fromAsset.symbol}`] = increment(parseFloat(amount));
+      } else if (activeTab === "sell") {
+        // Deduct crypto holding, credit USD
+        updates[`holdings.${fromAsset.symbol}`] = increment(-parseFloat(amount));
+        updates.usdBalance = increment(cost);
+      } else {
+        // Swap — deduct fromAsset holding, credit toAsset holding
+        updates[`holdings.${fromAsset.symbol}`] = increment(-parseFloat(amount));
+        updates[`holdings.${toAsset.symbol}`]   = increment(parseFloat(toAmount));
+      }
+
+      await updateDoc(doc(db, "wallets", uid), updates);
+
       await addDoc(collection(db, "transactions"), {
         fromUid: uid, fromEmail: auth.currentUser?.email||"",
         fromName: auth.currentUser?.displayName||"User",
@@ -153,6 +184,14 @@ export default function TradeScreen({ cryptos=[] }) {
         <span style={{ fontSize:12, color:C.muted }}>USD Balance</span>
         <span style={{ fontSize:14, fontWeight:700, color:C.white }}>${balance.toLocaleString("en-US",{minimumFractionDigits:2})}</span>
       </div>
+
+      {/* Holding bar — shows for sell/swap */}
+      {(activeTab === "sell" || activeTab === "swap") && (
+        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", background:C.bgElevated, border:`1px solid ${C.border}`, borderRadius:10, padding:"10px 16px" }}>
+          <span style={{ fontSize:12, color:C.muted }}>{fromAsset.symbol} Holdings</span>
+          <span style={{ fontSize:14, fontWeight:700, color:C.white }}>{fromHolding.toFixed(6)} {fromAsset.symbol}</span>
+        </div>
+      )}
 
       {/* Chart card */}
       <Card hover={false} style={{ padding:"16px 12px" }}>
@@ -205,7 +244,7 @@ export default function TradeScreen({ cryptos=[] }) {
             style={{ flex:1, background:"none", border:"none", outline:"none", color:C.white, fontSize:24, fontWeight:700, textAlign:"right" }} />
         </div>
         <div style={{ fontSize:12, color:C.muted, marginTop:6 }}>
-          ≈ ${usdCost} USD · Balance: {fromAsset.balance} {fromAsset.symbol}
+          ≈ ${usdCost} USD · Holdings: {fromHolding.toFixed(6)} {fromAsset.symbol}
         </div>
       </Card>
 
