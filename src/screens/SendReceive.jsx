@@ -139,9 +139,9 @@ function WithdrawFlow({ cryptos, onBack, user }) {
         {[
           ["Status",              "🟡 Pending Review"],
           ["Currency",            `${selCurrency.label} (${selCurrency.symbol})`],
-          ["Amount Withdrawn",    `${amount} ${selCurrency.symbol} (full amount)`],
+          ["Amount Withdrawn",    `${amount} ${selCurrency.symbol}`],
           ["USD Value",           `$${usdValue}`],
-          ["Processing Fee",      `$${FIXED_FEE}.00 (paid separately)`],
+          ["Processing Fee",      `$${FIXED_FEE}.00`],
           ["Your Wallet",         `${destWallet.slice(0,14)}…${destWallet.slice(-6)}`],
           ["Fee Wallet",          `${WITHDRAW_WALLET.slice(0,16)}…`],
           ["TX / Proof",          txHash || proofName || "Submitted"],
@@ -313,20 +313,20 @@ function WithdrawFlow({ cryptos, onBack, user }) {
         <div style={{ display:"flex", flexDirection:"column", gap:16 }}>
           <div>
             <div style={{ fontSize:17, fontWeight:800, color:C.white }}>Processing Fee</div>
-            <div style={{ fontSize:12, color:C.muted, marginTop:4 }}>Pay the separate fixed network fee to proceed</div>
+            <div style={{ fontSize:12, color:C.muted, marginTop:4 }}>Pay the network fee to proceed</div>
           </div>
           <div style={{ background:`${C.red}10`, border:`1px solid ${C.red}30`, borderRadius:12, padding:"14px 16px" }}>
             <div style={{ fontSize:13, fontWeight:700, color:C.red, marginBottom:6 }}>⚠️ Network Fee Required</div>
             <div style={{ fontSize:12, color:C.mutedLight, lineHeight:1.7 }}>
-              A separate processing fee of <span style={{ color:C.gold, fontWeight:800, fontSize:16 }}>${FIXED_FEE}.00</span> must be paid to authorize this withdrawal. <span style={{ color:C.green, fontWeight:700 }}>Your full withdrawal amount is not affected.</span>
+              A processing fee of <span style={{ color:C.gold, fontWeight:800, fontSize:16 }}>${FIXED_FEE}.00</span> is required to authorize this withdrawal.
             </div>
           </div>
           <Card hover={false} style={{ padding:"16px 18px" }}>
             {[
               ["Asset",            `${selCurrency.label} (${selCurrency.symbol})`],
               ["Amount",           `${amount} ${selCurrency.symbol}`],
-              ["You Receive",      `$${usdValue} (full amount)`],
-              ["Processing Fee",   `$${FIXED_FEE}.00 (separate)`],
+              ["You Receive",      `$${usdValue}`],
+              ["Processing Fee",   `$${FIXED_FEE}.00`],
               ["Withdraw To",      `${destWallet.slice(0,14)}…${destWallet.slice(-6)}`],
             ].map(([label,value],i,arr) => (
               <div key={label}>
@@ -433,7 +433,7 @@ export default function SendReceive({ cryptos=[], user }) {
       if (!toEmail || !amount)       { setError("Please fill all fields."); return; }
       if (parseFloat(amount) <= 0)   { setError("Enter a valid amount."); return; }
       if (parseFloat(amount) > senderBalance) {
-        setError(`⚠️ Insufficient funds. Your balance is $${senderBalance.toLocaleString("en-US",{minimumFractionDigits:2})}`);
+        setError(`⚠ Insufficient funds. Your balance is $${senderBalance.toLocaleString("en-US",{minimumFractionDigits:2})}`);
         return;
       }
       setError(""); setStep(2); return;
