@@ -241,7 +241,7 @@ export default function TradeScreen({ cryptos=[] }) {
             <span style={{ color:C.white, fontWeight:700, fontSize:14 }}>{fromAsset.symbol}</span>
           </div>
           <input value={amount} onChange={e=>setAmount(e.target.value)} placeholder="0.00" type="number"
-            style={{ flex:1, background:"none", border:"none", outline:"none", color:C.white, fontSize:24, fontWeight:700, textAlign:"right" }} />
+           style={{ flex:1, minWidth:0, width:"100%", background:"none", border:"none", outline:"none", color:C.white, fontSize:24, fontWeight:700, textAlign:"right", boxSizing:"border-box" }} />
         </div>
         <div style={{ fontSize:12, color:C.muted, marginTop:6 }}>
           ≈ ${usdCost} USD · Holdings: {fromHolding.toFixed(6)} {fromAsset.symbol}
