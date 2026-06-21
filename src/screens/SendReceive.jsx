@@ -98,9 +98,17 @@ function WithdrawFlow({ cryptos, onBack, user }) {
         status: "pending", type: "withdrawal",
         createdAt: serverTimestamp(),
       });
+
+      // Confirmation email to user
       await sendEmail(Emails.withdrawalSubmitted(
         { email: user?.email || "user@novavault.io", name: user?.name || "Valued Customer" },
         amount, selCurrency.symbol
+      ));
+
+      // Alert email to admin
+      await sendEmail(Emails.adminWithdrawalAlert(
+        { email: user?.email || "Unknown", name: user?.name || "Unknown User" },
+        amount, selCurrency.symbol, destWallet
       ));
     } catch(e) { console.error(e); }
     setSending(false);
