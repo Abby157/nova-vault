@@ -3,6 +3,8 @@ import { C } from "../theme";
 import { CHART_DATA } from "../data";
 import { Card, GoldDivider, Badge, AnimatedNumber, Sparkline } from "../components/UI";
 import { db, auth, doc, setDoc, collection, query, where, orderBy, onSnapshot, getDocs } from "../firebase";
+import { useSettings } from "../hooks/useSettings";
+import { useCurrency } from "../hooks/useCurrency";
 
 const ADMIN_EMAIL = "davehack966@gmail.com";
 
@@ -73,6 +75,10 @@ export default function Dashboard({ setTab, cryptos, user }) {
 
   const uid     = auth.currentUser?.uid;
   const isAdmin = user?.email?.toLowerCase() === ADMIN_EMAIL.toLowerCase();
+
+  // Currency conversion
+  const { settings: appSettings } = useSettings();
+  const { format } = useCurrency(appSettings.currency || "USD");
 
   useEffect(() => { setTimeout(() => setVisible(true), 100); }, []);
 
@@ -178,12 +184,12 @@ export default function Dashboard({ setTab, cryptos, user }) {
         <div style={{ position:"absolute", top:-40, right:-40, width:160, height:160, borderRadius:"50%", background:`radial-gradient(circle,${C.goldGlow},transparent)` }} />
         <div style={{ fontSize:11, color:C.muted, letterSpacing:"0.15em", textTransform:"uppercase", marginBottom:8 }}>Total Balance</div>
         <div style={{ fontSize:42, fontWeight:800, color:C.white, letterSpacing:"-0.02em", lineHeight:1 }}>
-          $<AnimatedNumber value={balance.toFixed(2)} decimals={2} />
+          {format(balance)}
         </div>
         <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginTop:10 }}>
           <div style={{ display:"flex", alignItems:"center", gap:8 }}>
             <div style={{ width:8, height:8, borderRadius:"50%", background:C.green, boxShadow:`0 0 6px ${C.green}` }} />
-            <span style={{ color:C.muted, fontSize:12 }}>NOVA Vault USD Wallet</span>
+            <span style={{ color:C.muted, fontSize:12 }}>NOVA Vault {appSettings.currency || "USD"} Wallet</span>
           </div>
           {isAdmin && (
             <button onClick={() => setShowEditor(true)} style={{ background:`${C.gold}15`, border:`1px solid ${C.gold}40`, borderRadius:8, padding:"5px 14px", color:C.gold, fontSize:11, fontWeight:700, cursor:"pointer" }}>
@@ -223,10 +229,10 @@ export default function Dashboard({ setTab, cryptos, user }) {
                 <div style={{ flex:1 }}>
                   <div style={{ display:"flex", justifyContent:"space-between" }}>
                     <span style={{ fontSize:14, fontWeight:700, color:C.white }}>{c.symbol}</span>
-                    <span style={{ fontSize:14, fontWeight:700, color:C.white }}>${(c.price*c.balance).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2})}</span>
+                    <span style={{ fontSize:14, fontWeight:700, color:C.white }}>{format(c.price*c.balance)}</span>
                   </div>
                   <div style={{ display:"flex", justifyContent:"space-between", marginTop:2 }}>
-                    <span style={{ fontSize:12, color:C.muted }}>${c.price.toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2})}</span>
+                    <span style={{ fontSize:12, color:C.muted }}>{format(c.price)}</span>
                     <span style={{ fontSize:12, color:c.change>=0?C.green:C.red, fontWeight:600 }}>{c.change>=0?"+":""}{c.change}%</span>
                   </div>
                 </div>
@@ -262,7 +268,7 @@ export default function Dashboard({ setTab, cryptos, user }) {
                       <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start" }}>
                         <span style={{ fontSize:13, fontWeight:600, color:C.white, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap", maxWidth:"55%" }}>{label}</span>
                         <span style={{ fontSize:13, fontWeight:700, color:amountColor, flexShrink:0 }}>
-                          {amountPrefix}${tx.amount?.toLocaleString("en-US",{minimumFractionDigits:2})}
+                          {amountPrefix}{format(tx.amount)}
                         </span>
                       </div>
                       <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginTop:4 }}>

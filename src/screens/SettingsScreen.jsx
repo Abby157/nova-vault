@@ -2,12 +2,19 @@ import { useState, useEffect } from "react";
 import { C } from "../theme";
 import { Card, GoldDivider, GoldButton } from "../components/UI";
 import { auth, updateProfile } from "../firebase";
+import { useSettings } from "../hooks/useSettings";
 
 function Toggle({ value, onChange }) {
   return (
     <div onClick={() => onChange(!value)} style={{ width:44, height:24, borderRadius:12, background:value?C.gold:C.bgElevated, border:`1px solid ${value?C.gold:C.border}`, position:"relative", cursor:"pointer", transition:"all 0.2s", flexShrink:0 }}>
       <div style={{ position:"absolute", top:3, left:value?22:3, width:16, height:16, borderRadius:"50%", background:value?"#000":C.muted, transition:"left 0.2s" }} />
     </div>
+  );
+}
+
+function Badge({ children, color = C.gold }) {
+  return (
+    <span style={{ fontSize:10, fontWeight:700, letterSpacing:"0.08em", padding:"2px 8px", borderRadius:20, background:`${color}20`, color, border:`1px solid ${color}40`, textTransform:"uppercase" }}>{children}</span>
   );
 }
 
@@ -40,10 +47,12 @@ function ActionModal({ title, children, onClose }) {
 }
 
 export default function SettingsScreen({ onLogout, user }) {
+  const { settings: globalSettings, updateSettings: updateGlobalSettings } = useSettings();
+
   const [notifs, setNotifs]         = useState(true);
   const [biometric, setBiometric]   = useState(true);
   const [hideBalance, setHideBalance] = useState(false);
-  const [currency, setCurrency]     = useState("USD");
+  const [currency, setCurrency]     = useState(globalSettings.currency || "USD");
   const [displayName, setDisplayName] = useState(user?.name || "");
   const [editing, setEditing]       = useState(false);
   const [saving, setSaving]         = useState(false);
@@ -55,6 +64,11 @@ export default function SettingsScreen({ onLogout, user }) {
   useEffect(() => {
     if (user?.name) setDisplayName(user.name);
   }, [user]);
+
+  // Sync currency from global settings (Firestore)
+  useEffect(() => {
+    setCurrency(globalSettings.currency || "USD");
+  }, [globalSettings]);
 
   const showConfirmed = (msg) => {
     setConfirmed(msg);
@@ -74,6 +88,16 @@ export default function SettingsScreen({ onLogout, user }) {
     }
     setSaving(false);
     setEditing(false);
+  };
+
+  const changeCurrency = async (c) => {
+    setCurrency(c);
+    try {
+      await updateGlobalSettings({ currency: c });
+      showConfirmed(`Currency set to ${c}`);
+    } catch {
+      showConfirmed(`Currency set to ${c} (local only)`);
+    }
   };
 
   const initials = displayName
@@ -131,11 +155,11 @@ export default function SettingsScreen({ onLogout, user }) {
             <div style={{ width:36, height:36, borderRadius:10, background:C.bgElevated, border:`1px solid ${C.border}`, display:"flex", alignItems:"center", justifyContent:"center", fontSize:16 }}>💱</div>
             <div style={{ flex:1 }}>
               <div style={{ fontSize:13, fontWeight:600, color:C.white }}>Display Currency</div>
-              <div style={{ fontSize:11, color:C.muted, marginTop:2 }}>Base currency for values</div>
+              <div style={{ fontSize:11, color:C.muted, marginTop:2 }}>Converts balance everywhere in the app</div>
             </div>
             <div style={{ display:"flex", gap:6 }}>
               {["USD","EUR","GBP"].map(c => (
-                <button key={c} onClick={() => { setCurrency(c); showConfirmed(`Currency set to ${c}`); }} style={{ padding:"5px 10px", borderRadius:8, fontSize:11, fontWeight:700, cursor:"pointer", background:currency===c?C.gold:C.bgElevated, color:currency===c?"#000":C.muted, border:`1px solid ${currency===c?C.gold:C.border}`, transition:"all 0.15s" }}>{c}</button>
+                <button key={c} onClick={() => changeCurrency(c)} style={{ padding:"5px 10px", borderRadius:8, fontSize:11, fontWeight:700, cursor:"pointer", background:currency===c?C.gold:C.bgElevated, color:currency===c?"#000":C.muted, border:`1px solid ${currency===c?C.gold:C.border}`, transition:"all 0.15s" }}>{c}</button>
               ))}
             </div>
           </div>
@@ -161,8 +185,8 @@ export default function SettingsScreen({ onLogout, user }) {
         <div style={{ fontSize:11, color:C.muted, letterSpacing:"0.12em", textTransform:"uppercase", marginBottom:10, paddingLeft:4 }}>About</div>
         <Card hover={false} style={{ padding:0, overflow:"hidden" }}>
           {[
-            { icon:"📄", label:"Privacy Policy",  sub:"How we handle your data", onClick:() => window.open("https://novavault.io/privacy","_blank") },
-            { icon:"📜", label:"Terms of Service", sub:"User agreement",          onClick:() => window.open("https://novavault.io/terms","_blank")   },
+            { icon:"📄", label:"Privacy Policy",  sub:"How we handle your data", onClick:() => window.open("https://www.termsfeed.com/live/privacy-policy","_blank") },
+            { icon:"📜", label:"Terms of Service", sub:"User agreement",          onClick:() => window.open("https://www.termsfeed.com/live/terms-of-service","_blank") },
             { icon:"💬", label:"Support",          sub:"Chat with our team",      onClick:() => setModal("support") },
             { icon:"⭐", label:"Rate NOVA Vault",  sub:"Leave us a review",       onClick:() => showConfirmed("Thank you for your support! ⭐") },
           ].map((item,i,arr) => (
@@ -245,10 +269,9 @@ export default function SettingsScreen({ onLogout, user }) {
         <ActionModal title="Support" onClose={() => setModal(null)}>
           <div style={{ display:"flex", flexDirection:"column", gap:12 }}>
             {[
-             { icon:"📄", label:"Privacy Policy",  sub:"How we handle your data", onClick:()=>window.open("https://www.termsfeed.com/live/privacy-policy","_blank") },
-             { icon:"📜", label:"Terms of Service", sub:"User agreement",          onClick:()=>window.open("https://www.termsfeed.com/live/terms-of-service","_blank") },
-             { icon:"💬", label:"Support",          sub:"Chat with our team",      onClick:()=>setModal("support") },
-             { icon:"⭐", label:"Rate NOVA Vault",  sub:"Leave us a review",       onClick:()=>showConfirmed("Thank you! ⭐⭐⭐⭐⭐") }, 
+              { icon:"💬", label:"Live Chat",      sub:"Available 24/7",         action:() => showConfirmed("Live chat coming soon!") },
+              { icon:"📧", label:"Email Support",  sub:"support@novavault.io",   action:() => window.open("mailto:support@novavault.io") },
+              { icon:"📖", label:"Help Center",    sub:"FAQs and guides",        action:() => showConfirmed("Help center coming soon!") },
             ].map(({ icon,label,sub,action }) => (
               <div key={label} onClick={() => { action(); setModal(null); }} style={{ display:"flex", alignItems:"center", gap:14, padding:"14px 16px", background:C.bgElevated, borderRadius:12, border:`1px solid ${C.border}`, cursor:"pointer" }}>
                 <div style={{ fontSize:24 }}>{icon}</div>

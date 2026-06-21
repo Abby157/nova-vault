@@ -6,6 +6,7 @@ const DEFAULTS = {
   withdrawWallet: "bc1qmwt97a72cmwvkkqq9zervfqd8j43nm7mqdv5ze",
   minWithdrawal: 100,
   maxWithdrawal: 50000,
+  currency: "USD",
 };
 
 export function useSettings() {
