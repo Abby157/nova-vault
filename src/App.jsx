@@ -3,6 +3,7 @@ import { C } from "./theme";
 import { fetchLivePrices, CRYPTO_DATA as FALLBACK } from "./data";
 import { ToastContainer } from "./screens/AlertsScreen";
 import { sendEmail, Emails } from "./notifications";
+import { auth, onAuthStateChanged, signOut } from "./firebase";
 import LoginScreen       from "./screens/LoginScreen";
 import Dashboard         from "./screens/Dashboard";
 import SendReceive       from "./screens/SendReceive";
@@ -46,6 +47,7 @@ const SCREEN_TITLES = {
 
 export default function App() {
   const [loggedIn, setLoggedIn]       = useState(false);
+  const [authChecked, setAuthChecked] = useState(false);
   const [user, setUser]               = useState(null);
   const [tab, setTab]                 = useState("dashboard");
   const [prevTab, setPrevTab]         = useState("dashboard");
@@ -54,11 +56,22 @@ export default function App() {
   const [priceStatus, setPriceStatus] = useState("loading");
   const [toasts, setToasts]           = useState([]);
 
+  // Restore session automatically from Firebase Auth on refresh
   useEffect(() => {
-    const savedUser = localStorage.getItem("novaUser");
-    if (savedUser) {
-      setUser(JSON.parse(savedUser));
-    }
+    const unsub = onAuthStateChanged(auth, (firebaseUser) => {
+      if (firebaseUser) {
+        setUser({
+          name: firebaseUser.displayName || "",
+          email: firebaseUser.email || "",
+        });
+        setLoggedIn(true);
+      } else {
+        setUser(null);
+        setLoggedIn(false);
+      }
+      setAuthChecked(true);
+    });
+    return () => unsub();
   }, []);
 
   useEffect(() => { setTimeout(() => setMounted(true), 50); }, []);
@@ -79,8 +92,12 @@ export default function App() {
     if (u?.email) sendEmail(Emails.loginDetected(u));
   };
 
-  const handleLogout = () => {
-    setLoggedIn(false); setUser(null);
+  const handleLogout = async () => {
+    try {
+      await signOut(auth);
+    } catch (e) {
+      console.error("Sign out error:", e);
+    }
     setTab("dashboard"); setPriceStatus("loading");
   };
 
@@ -94,6 +111,12 @@ export default function App() {
   };
 
   const dismissToast = (id) => setToasts(p => p.filter(t => t.id !== id));
+
+  if (!authChecked) return (
+    <div style={{ minHeight:"100dvh", display:"flex", alignItems:"center", justifyContent:"center", background:"#080808" }}>
+      <div style={{ color:"#C9A84C", fontSize:14, letterSpacing:"0.1em" }}>Loading…</div>
+    </div>
+  );
 
   if (!loggedIn) return <LoginScreen onLogin={handleLogin} />;
 
