@@ -131,7 +131,6 @@ export default function App() {
   return (
     <div style={{
       background:C.bg,
-      minHeight:"100vh",
       minHeight:"100dvh",
       width:"100%",
       maxWidth:480,
