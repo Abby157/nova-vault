@@ -184,6 +184,10 @@ export default function App() {
                       window.supportCloseChat();
                       return;
                     }
+                    if (tab === "send" && window.withdrawFlowActive && window.withdrawFlowBack) {
+                      const handled = window.withdrawFlowBack();
+                      if (handled) return;
+                    }
                     goBack();
                   }}
                   style={{

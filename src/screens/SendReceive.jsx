@@ -42,6 +42,22 @@ function WithdrawFlow({ cryptos, onBack, user }) {
   const cryptoAsset = cryptos.find(c => c.symbol === selCurrency.symbol);
   const price       = cryptoAsset?.price || 1;
 
+  // Let the header back button defer to this flow's own step navigation
+  useEffect(() => {
+    window.withdrawFlowActive = true;
+    window.withdrawFlowBack = () => {
+      if (step > 1) {
+        setStep(s => s - 1);
+        return true; // handled internally
+      }
+      return false; // let the normal back happen (exits the flow)
+    };
+    return () => {
+      window.withdrawFlowActive = false;
+      window.withdrawFlowBack = null;
+    };
+  }, [step]);
+
   // Normalize amount to crypto units regardless of which mode the user typed in
   const cryptoAmount = amountMode === "usd" && amount
     ? (parseFloat(amount) / price).toFixed(8)
