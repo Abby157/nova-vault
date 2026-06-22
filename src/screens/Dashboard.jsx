@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { ArrowUp, ArrowDown, RefreshCw, PieChart, ArrowUpRight, ArrowDownRight } from "lucide-react";
 import { C } from "../theme";
 import { CHART_DATA } from "../data";
 import { Card, GoldDivider, Badge, AnimatedNumber, Sparkline } from "../components/UI";
@@ -67,11 +68,37 @@ function AdminBalanceEditor({ uid, balance, user, onClose }) {
   );
 }
 
+function SkeletonRow() {
+  return (
+    <div style={{ padding:"14px 18px", display:"flex", alignItems:"center", gap:12 }}>
+      <div style={{ width:36, height:36, borderRadius:"50%", background:C.bgElevated, flexShrink:0 }} />
+      <div style={{ flex:1 }}>
+        <div style={{ height:13, width:"55%", background:C.bgElevated, borderRadius:4, marginBottom:8 }} />
+        <div style={{ height:11, width:"35%", background:C.bgElevated, borderRadius:4 }} />
+      </div>
+      <div style={{ height:13, width:60, background:C.bgElevated, borderRadius:4 }} />
+    </div>
+  );
+}
+
+function PctPill({ value }) {
+  const isUp = value >= 0;
+  const color = isUp ? C.green : C.red;
+  const Icon = isUp ? ArrowUpRight : ArrowDownRight;
+  return (
+    <span style={{ display:"inline-flex", alignItems:"center", gap:2, padding:"2px 7px", borderRadius:20, background:`${color}15`, border:`1px solid ${color}30`, color, fontSize:11, fontWeight:700 }}>
+      <Icon size={11} strokeWidth={2.5} />
+      {Math.abs(value)}%
+    </span>
+  );
+}
+
 export default function Dashboard({ setTab, cryptos, user }) {
   const [balance, setBalance]           = useState(0);
   const [transactions, setTransactions] = useState([]);
   const [showEditor, setShowEditor]     = useState(false);
   const [visible, setVisible]           = useState(false);
+  const [loadingTx, setLoadingTx]       = useState(true);
 
   const uid     = auth.currentUser?.uid;
   const isAdmin = user?.email?.toLowerCase() === ADMIN_EMAIL.toLowerCase();
@@ -114,6 +141,7 @@ export default function Dashboard({ setTab, cryptos, user }) {
           .sort((a,b) => (b.createdAt?.seconds||0) - (a.createdAt?.seconds||0))
           .slice(0, 10)
       );
+      setLoadingTx(false);
     };
 
     // Sent / swap / withdrawal
@@ -152,10 +180,10 @@ export default function Dashboard({ setTab, cryptos, user }) {
       ? (tx.status==="approved" ? C.green : tx.status==="rejected" ? C.red : C.gold)
       : isReceive ? C.green : C.red;
 
-    const icon = isWithdraw ? "↓" : isReceive ? "↓" : isSwap ? "⇄" : "↑";
+    const Icon = isWithdraw ? ArrowDown : isReceive ? ArrowDown : isSwap ? RefreshCw : ArrowUp;
 
     const label = isWithdraw
-      ? `Withdrawal · ${tx.note?.split("→")[0]?.replace("Withdrawal ·","")?.trim() || ""}`
+      ? `Withdrawal · ${tx.toName?.replace("Withdraw ","") || ""}`
       : isReceive
         ? `From ${tx.fromName || tx.fromEmail || "User"}`
         : isSwap
@@ -173,43 +201,61 @@ export default function Dashboard({ setTab, cryptos, user }) {
       : tx.status==="completed" ? C.green
       : C.gold;
 
-    return { color, icon, label, amountColor, amountPrefix, statusColor };
+    return { color, Icon, label, amountColor, amountPrefix, statusColor };
   };
+
+  const QUICK_ACTIONS = [
+    { Icon: ArrowUp,   label:"Send",      tab:"send" },
+    { Icon: ArrowDown, label:"Receive",   tab:"send" },
+    { Icon: RefreshCw, label:"Swap",      tab:"trade" },
+    { Icon: PieChart,  label:"Portfolio", tab:"portfolio" },
+  ];
 
   return (
     <div style={{ opacity:visible?1:0, transition:"opacity 0.4s", display:"flex", flexDirection:"column", gap:20 }}>
 
       {/* Hero Balance */}
-      <Card hover={false} style={{ background:"linear-gradient(135deg,#0f0f0f 0%,#1a1400 100%)", border:`1px solid ${C.borderStrong}`, position:"relative", overflow:"hidden" }}>
-        <div style={{ position:"absolute", top:-40, right:-40, width:160, height:160, borderRadius:"50%", background:`radial-gradient(circle,${C.goldGlow},transparent)` }} />
-        <div style={{ fontSize:11, color:C.muted, letterSpacing:"0.15em", textTransform:"uppercase", marginBottom:8 }}>Total Balance</div>
-        <div style={{ fontSize:42, fontWeight:800, color:C.white, letterSpacing:"-0.02em", lineHeight:1 }}>
-          {format(balance)}
-        </div>
-        <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginTop:10 }}>
-          <div style={{ display:"flex", alignItems:"center", gap:8 }}>
-            <div style={{ width:8, height:8, borderRadius:"50%", background:C.green, boxShadow:`0 0 6px ${C.green}` }} />
-            <span style={{ color:C.muted, fontSize:12 }}>NOVA Vault {appSettings.currency || "USD"} Wallet</span>
+      <Card hover={false} style={{ background:"linear-gradient(145deg,#0f0f0f 0%,#1a1400 60%,#100d00 100%)", border:`1px solid ${C.borderStrong}`, position:"relative", overflow:"hidden" }}>
+        {/* Subtle texture: diagonal hairlines */}
+        <div style={{
+          position:"absolute", inset:0,
+          backgroundImage:`repeating-linear-gradient(115deg, ${C.gold}05 0px, ${C.gold}05 1px, transparent 1px, transparent 14px)`,
+          pointerEvents:"none",
+        }} />
+        <div style={{ position:"absolute", top:-50, right:-50, width:180, height:180, borderRadius:"50%", background:`radial-gradient(circle,${C.goldGlow},transparent)` }} />
+
+        <div style={{ position:"relative" }}>
+          <div style={{ fontSize:11, color:C.muted, letterSpacing:"0.15em", textTransform:"uppercase", marginBottom:8 }}>Total Balance</div>
+          <div style={{ fontSize:42, fontWeight:800, color:C.white, letterSpacing:"-0.02em", lineHeight:1 }}>
+            {format(balance)}
           </div>
-          {isAdmin && (
-            <button onClick={() => setShowEditor(true)} style={{ background:`${C.gold}15`, border:`1px solid ${C.gold}40`, borderRadius:8, padding:"5px 14px", color:C.gold, fontSize:11, fontWeight:700, cursor:"pointer" }}>
-              ⚙️ Admin
-            </button>
-          )}
-        </div>
-        <div style={{ marginTop:20 }}>
-          <Sparkline data={CHART_DATA} color={C.gold} height={50} width={300} />
+          <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginTop:10 }}>
+            <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+              <div style={{ width:8, height:8, borderRadius:"50%", background:C.green, boxShadow:`0 0 6px ${C.green}` }} />
+              <span style={{ color:C.muted, fontSize:12 }}>NOVA Vault {appSettings.currency || "USD"} Wallet</span>
+            </div>
+            {isAdmin && (
+              <button onClick={() => setShowEditor(true)} style={{ background:`${C.gold}15`, border:`1px solid ${C.gold}40`, borderRadius:8, padding:"5px 14px", color:C.gold, fontSize:11, fontWeight:700, cursor:"pointer" }}>
+                ⚙️ Admin
+              </button>
+            )}
+          </div>
+          <div style={{ marginTop:20 }}>
+            <Sparkline data={CHART_DATA} color={C.gold} height={50} width={300} />
+          </div>
         </div>
       </Card>
 
       {/* Quick Actions */}
       <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:10 }}>
-        {[["↑","Send","send"],["↓","Receive","send"],["⇄","Swap","trade"],["⬡","Portfolio","portfolio"]].map(([icon,label,tab]) => (
-          <button key={label} onClick={() => setTab(tab)} style={{ background:C.bgElevated, border:`1px solid ${C.border}`, borderRadius:12, padding:"14px 8px", display:"flex", flexDirection:"column", alignItems:"center", gap:6, cursor:"pointer", transition:"all 0.2s" }}
+        {QUICK_ACTIONS.map(({ Icon, label, tab }) => (
+          <button key={label} onClick={() => setTab(tab)} style={{ background:C.bgElevated, border:`1px solid ${C.border}`, borderRadius:12, padding:"14px 8px", display:"flex", flexDirection:"column", alignItems:"center", gap:8, cursor:"pointer", transition:"all 0.2s" }}
             onMouseEnter={e => { e.currentTarget.style.borderColor=C.gold; e.currentTarget.style.background=C.bgHover; }}
             onMouseLeave={e => { e.currentTarget.style.borderColor=C.border; e.currentTarget.style.background=C.bgElevated; }}
           >
-            <div style={{ width:36, height:36, borderRadius:"50%", background:C.goldGlow, border:`1px solid ${C.borderStrong}`, display:"flex", alignItems:"center", justifyContent:"center", color:C.gold, fontSize:16, fontWeight:700 }}>{icon}</div>
+            <div style={{ width:36, height:36, borderRadius:"50%", background:C.goldGlow, border:`1px solid ${C.borderStrong}`, display:"flex", alignItems:"center", justifyContent:"center", color:C.gold }}>
+              <Icon size={16} strokeWidth={2.25} />
+            </div>
             <span style={{ fontSize:11, color:C.mutedLight, fontWeight:600 }}>{label}</span>
           </button>
         ))}
@@ -231,9 +277,9 @@ export default function Dashboard({ setTab, cryptos, user }) {
                     <span style={{ fontSize:14, fontWeight:700, color:C.white }}>{c.symbol}</span>
                     <span style={{ fontSize:14, fontWeight:700, color:C.white }}>{format(c.price*c.balance)}</span>
                   </div>
-                  <div style={{ display:"flex", justifyContent:"space-between", marginTop:2 }}>
+                  <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginTop:4 }}>
                     <span style={{ fontSize:12, color:C.muted }}>{format(c.price)}</span>
-                    <span style={{ fontSize:12, color:c.change>=0?C.green:C.red, fontWeight:600 }}>{c.change>=0?"+":""}{c.change}%</span>
+                    <PctPill value={c.change} />
                   </div>
                 </div>
               </div>
@@ -249,7 +295,15 @@ export default function Dashboard({ setTab, cryptos, user }) {
           <span style={{ fontSize:12, color:C.gold, cursor:"pointer" }} onClick={() => setTab("history")}>See All</span>
         </div>
         <Card hover={false} style={{ padding:0, overflow:"hidden" }}>
-          {transactions.length === 0 ? (
+          {loadingTx ? (
+            <>
+              <SkeletonRow />
+              <GoldDivider />
+              <SkeletonRow />
+              <GoldDivider />
+              <SkeletonRow />
+            </>
+          ) : transactions.length === 0 ? (
             <div style={{ padding:"32px 16px", textAlign:"center", color:C.muted }}>
               <div style={{ fontSize:32, marginBottom:8 }}>💸</div>
               <div style={{ fontSize:13, fontWeight:600, color:C.mutedLight }}>No transactions yet</div>
@@ -257,12 +311,12 @@ export default function Dashboard({ setTab, cryptos, user }) {
             </div>
           ) : (
             transactions.slice(0,3).map((tx, i) => {
-              const { color, icon, label, amountColor, amountPrefix, statusColor } = getTxDisplay(tx);
+              const { color, Icon, label, amountColor, amountPrefix, statusColor } = getTxDisplay(tx);
               return (
                 <div key={tx.id}>
                   <div style={{ padding:"14px 18px", display:"flex", alignItems:"center", gap:12 }}>
-                    <div style={{ width:36, height:36, borderRadius:"50%", flexShrink:0, background:`${color}15`, display:"flex", alignItems:"center", justifyContent:"center", fontSize:14, color }}>
-                      {icon}
+                    <div style={{ width:36, height:36, borderRadius:"50%", flexShrink:0, background:`${color}15`, display:"flex", alignItems:"center", justifyContent:"center", color }}>
+                      <Icon size={15} strokeWidth={2.25} />
                     </div>
                     <div style={{ flex:1, minWidth:0 }}>
                       <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start" }}>
