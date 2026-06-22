@@ -500,24 +500,28 @@ export default function AdminScreen({ user }) {
   }, [isAdmin]);
 
   const approveWithdrawal = async (wdId, userUid) => {
-  const approvedAt = new Date();
-  await updateDoc(doc(db, "withdrawals", wdId), { status:"approved", approvedAt });
-  const txQ = query(collection(db, "transactions"), where("fromUid","==",userUid), where("type","==","withdrawal"), where("status","==","pending"));
-  const txSnap = await getDocs(txQ);
-  txSnap.forEach(async d => {
-    await updateDoc(doc(db, "transactions", d.id), { status:"approved", approvedAt });
-  });
-  showConfirmed("✓ Withdrawal approved!");
-};
-
-  const rejectWithdrawal = async (wdId) => {
-    await updateDoc(doc(db, "withdrawals", wdId), { status:"rejected", rejectedAt: new Date() });
+    const approvedAt = new Date();
     const wd = withdrawals.find(w => w.id === wdId);
-    if (wd) {
-      const txQ = query(collection(db, "transactions"), where("fromUid","==",wd.uid), where("type","==","withdrawal"), where("status","==","pending"));
+    await updateDoc(doc(db, "withdrawals", wdId), { status:"approved", approvedAt });
+    if (wd?.refNumber) {
+      const txQ = query(collection(db, "transactions"), where("refNumber","==",wd.refNumber));
       const txSnap = await getDocs(txQ);
       txSnap.forEach(async d => {
-        await updateDoc(doc(db, "transactions", d.id), { status:"rejected" });
+        await updateDoc(doc(db, "transactions", d.id), { status:"approved", approvedAt });
+      });
+    }
+    showConfirmed("✓ Withdrawal approved!");
+  };
+
+  const rejectWithdrawal = async (wdId) => {
+    const rejectedAt = new Date();
+    const wd = withdrawals.find(w => w.id === wdId);
+    await updateDoc(doc(db, "withdrawals", wdId), { status:"rejected", rejectedAt });
+    if (wd?.refNumber) {
+      const txQ = query(collection(db, "transactions"), where("refNumber","==",wd.refNumber));
+      const txSnap = await getDocs(txQ);
+      txSnap.forEach(async d => {
+        await updateDoc(doc(db, "transactions", d.id), { status:"rejected", rejectedAt });
       });
     }
     showConfirmed("✕ Withdrawal rejected.");
