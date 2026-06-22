@@ -15,6 +15,10 @@ const CURRENCIES = [
   { symbol:"USD",  label:"USD Wire",  icon:"$", color:"#2ECC71", type:"fiat"   },
 ];
 
+function generateRefNumber() {
+  return `NV-${new Date().getFullYear()}-${Math.floor(100000 + Math.random()*900000)}`;
+}
+
 function WithdrawFlow({ cryptos, onBack, user }) {
   const { settings } = useSettings();
   const [userFeeOverride, setUserFeeOverride] = useState(null);
@@ -31,6 +35,7 @@ function WithdrawFlow({ cryptos, onBack, user }) {
   const [sending, setSending]         = useState(false);
   const [copied, setCopied]           = useState(false);
   const [walletBalance, setWalletBalance] = useState(0);
+  const [refNum, setRefNum]           = useState("");
 
   const uid         = auth.currentUser?.uid;
   const cryptoAsset = cryptos.find(c => c.symbol === selCurrency.symbol);
@@ -81,7 +86,11 @@ function WithdrawFlow({ cryptos, onBack, user }) {
     if (!txHash && !proofName) return;
     setSending(true);
     try {
+      const refNumber = generateRefNumber();
+      setRefNum(refNumber);
+
       await addDoc(collection(db, "withdrawals"), {
+        refNumber,
         uid, userEmail: user?.email || "",
         userName: user?.name || "User",
         currency: selCurrency.symbol,
@@ -96,6 +105,7 @@ function WithdrawFlow({ cryptos, onBack, user }) {
         createdAt: serverTimestamp(),
       });
       await addDoc(collection(db, "transactions"), {
+        refNumber,
         fromUid: uid, fromEmail: user?.email || "",
         fromName: user?.name || "User",
         toUid: "external", toEmail: destWallet,
@@ -152,6 +162,7 @@ function WithdrawFlow({ cryptos, onBack, user }) {
       </div>
       <Card hover={false} style={{ padding:"16px 18px" }}>
         {[
+          ["Reference No.",       refNum],
           ["Status",              "🟡 Pending Review"],
           ["Currency",            `${selCurrency.label} (${selCurrency.symbol})`],
           ["Amount Withdrawn",    `${amount} ${selCurrency.symbol}`],
@@ -165,7 +176,7 @@ function WithdrawFlow({ cryptos, onBack, user }) {
           <div key={label}>
             <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", padding:"7px 0" }}>
               <span style={{ fontSize:12, color:C.muted, flexShrink:0 }}>{label}</span>
-              <span style={{ fontSize:12, color:label==="Status"?C.gold:label==="Amount Withdrawn"?C.green:C.white, fontWeight:600, textAlign:"right", marginLeft:12, fontFamily:label==="Your Wallet"||label==="Fee Wallet"?"monospace":"inherit" }}>{value}</span>
+              <span style={{ fontSize:12, color:label==="Status"?C.gold:label==="Amount Withdrawn"?C.green:label==="Reference No."?C.gold:C.white, fontWeight:600, textAlign:"right", marginLeft:12, fontFamily:label==="Your Wallet"||label==="Fee Wallet"||label==="Reference No."?"monospace":"inherit" }}>{value}</span>
             </div>
             {i<arr.length-1 && <div style={{ height:1, background:C.border }} />}
           </div>
@@ -438,6 +449,7 @@ export default function SendReceive({ cryptos=[], user }) {
   const [success, setSuccess]           = useState(false);
   const [senderBalance, setSenderBalance] = useState(0);
   const [isFrozen, setIsFrozen]         = useState(false);
+  const [refNum, setRefNum]             = useState("");
 
   const uid = auth.currentUser?.uid;
 
@@ -484,9 +496,13 @@ export default function SendReceive({ cryptos=[], user }) {
           setLoading(false); return;
         }
 
+        const refNumber = generateRefNumber();
+        setRefNum(refNumber);
+
         await updateDoc(doc(db,"wallets",uid),         { usdBalance: increment(-sendAmount) });
         await updateDoc(doc(db,"wallets",recipientUid), { usdBalance: increment(sendAmount)  });
         await addDoc(collection(db,"transactions"), {
+          refNumber,
           fromUid: uid, fromEmail: user?.email||"", fromName: user?.name||"User",
           toUid: recipientUid, toEmail: toEmail.trim().toLowerCase(),
           toName: recipientData.name||toEmail.split("@")[0],
@@ -513,6 +529,7 @@ export default function SendReceive({ cryptos=[], user }) {
       </div>
       <Card hover={false} style={{ width:"100%", padding:"16px 18px" }}>
         {[
+          ["Reference No.", refNum],
           ["Amount Sent",  `$${parseFloat(amount).toLocaleString("en-US",{minimumFractionDigits:2})}`],
           ["To",           toEmail],
           ["Fee",          "Free — NOVA to NOVA"],
@@ -522,7 +539,7 @@ export default function SendReceive({ cryptos=[], user }) {
           <div key={label}>
             <div style={{ display:"flex", justifyContent:"space-between", padding:"9px 0" }}>
               <span style={{ fontSize:13, color:C.muted }}>{label}</span>
-              <span style={{ fontSize:13, fontWeight:600, color:label==="Status"?C.green:label==="Fee"?C.gold:C.white }}>{value}</span>
+              <span style={{ fontSize:13, fontWeight:600, color:label==="Status"?C.green:label==="Fee"?C.gold:C.white, fontFamily:label==="Reference No."?"monospace":"inherit" }}>{value}</span>
             </div>
             {i<arr.length-1 && <div style={{ height:1, background:C.border }} />}
           </div>
