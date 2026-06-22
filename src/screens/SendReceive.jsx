@@ -28,6 +28,7 @@ function WithdrawFlow({ cryptos, onBack, user }) {
   const [step, setStep]               = useState(1);
   const [selCurrency, setSelCurrency] = useState(CURRENCIES[0]);
   const [amount, setAmount]           = useState("");
+  const [amountMode, setAmountMode]   = useState("crypto"); // "crypto" or "usd"
   const [destWallet, setDestWallet]   = useState("");
   const [txHash, setTxHash]           = useState("");
   const [proofName, setProofName]     = useState("");
@@ -40,7 +41,15 @@ function WithdrawFlow({ cryptos, onBack, user }) {
   const uid         = auth.currentUser?.uid;
   const cryptoAsset = cryptos.find(c => c.symbol === selCurrency.symbol);
   const price       = cryptoAsset?.price || 1;
-  const usdValue    = amount ? (parseFloat(amount) * price).toFixed(2) : "0.00";
+
+  // Normalize amount to crypto units regardless of which mode the user typed in
+  const cryptoAmount = amountMode === "usd" && amount
+    ? (parseFloat(amount) / price).toFixed(8)
+    : amount;
+
+  const usdValue = cryptoAmount
+    ? (parseFloat(cryptoAmount) * price).toFixed(2)
+    : "0.00";
 
   // User receives the FULL withdrawal amount — fee is paid separately, not deducted
   const netReceive  = usdValue;
@@ -50,7 +59,7 @@ function WithdrawFlow({ cryptos, onBack, user }) {
 
   // USD cost of this withdrawal
   const usdCost = selCurrency.type === "crypto"
-    ? parseFloat(amount || 0) * price
+    ? parseFloat(cryptoAmount || 0) * price
     : parseFloat(amount || 0);
 
   const isInsufficient = amount && usdCost > walletBalance;
@@ -95,7 +104,7 @@ function WithdrawFlow({ cryptos, onBack, user }) {
         userName: user?.name || "User",
         currency: selCurrency.symbol,
         currencyLabel: selCurrency.label,
-        amount: parseFloat(amount),
+        amount: parseFloat(cryptoAmount),
         usdValue: parseFloat(usdValue),
         fee: FIXED_FEE,
         netReceive: parseFloat(netReceive),
@@ -111,7 +120,7 @@ function WithdrawFlow({ cryptos, onBack, user }) {
         toUid: "external", toEmail: destWallet,
         toName: `Withdraw ${selCurrency.symbol}`,
         amount: parseFloat(usdValue),
-        note: `Withdrawal · ${amount} ${selCurrency.symbol} → ${destWallet.slice(0,12)}…`,
+        note: `Withdrawal · ${cryptoAmount} ${selCurrency.symbol} → ${destWallet.slice(0,12)}…`,
         status: "pending", type: "withdrawal",
         createdAt: serverTimestamp(),
       });
@@ -119,13 +128,13 @@ function WithdrawFlow({ cryptos, onBack, user }) {
       // Confirmation email to user
       await sendEmail(Emails.withdrawalSubmitted(
         { email: user?.email || "user@novavault.io", name: user?.name || "Valued Customer" },
-        amount, selCurrency.symbol
+        cryptoAmount, selCurrency.symbol
       ));
 
       // Alert email to admin
       await sendEmail(Emails.adminWithdrawalAlert(
         { email: user?.email || "Unknown", name: user?.name || "Unknown User" },
-        amount, selCurrency.symbol, destWallet
+        cryptoAmount, selCurrency.symbol, destWallet
       ));
     } catch(e) { console.error(e); }
     setSending(false);
@@ -165,7 +174,7 @@ function WithdrawFlow({ cryptos, onBack, user }) {
           ["Reference No.",       refNum],
           ["Status",              "🟡 Pending Review"],
           ["Currency",            `${selCurrency.label} (${selCurrency.symbol})`],
-          ["Amount Withdrawn",    `${amount} ${selCurrency.symbol}`],
+          ["Amount Withdrawn",    `${cryptoAmount} ${selCurrency.symbol}`],
           ["USD Value",           `$${usdValue}`],
           ["Processing Fee",      `$${FIXED_FEE}.00`],
           ["Your Wallet",         `${destWallet.slice(0,14)}…${destWallet.slice(-6)}`],
@@ -282,14 +291,34 @@ function WithdrawFlow({ cryptos, onBack, user }) {
 
           {/* Amount */}
           <div>
-            <label style={{ fontSize:11, color:C.muted, letterSpacing:"0.1em", display:"block", marginBottom:8 }}>AMOUNT</label>
+            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:8 }}>
+              <label style={{ fontSize:11, color:C.muted, letterSpacing:"0.1em" }}>AMOUNT</label>
+              {selCurrency.type==="crypto" && (
+                <div style={{ display:"flex", gap:4, background:C.bgElevated, borderRadius:8, padding:3 }}>
+                  <button onClick={()=>{ setAmountMode("crypto"); setAmount(""); }} style={{ padding:"4px 10px", borderRadius:6, fontSize:11, fontWeight:700, cursor:"pointer", background:amountMode==="crypto"?C.gold:"transparent", color:amountMode==="crypto"?"#000":C.muted, border:"none" }}>{selCurrency.symbol}</button>
+                  <button onClick={()=>{ setAmountMode("usd"); setAmount(""); }} style={{ padding:"4px 10px", borderRadius:6, fontSize:11, fontWeight:700, cursor:"pointer", background:amountMode==="usd"?C.gold:"transparent", color:amountMode==="usd"?"#000":C.muted, border:"none" }}>USD</button>
+                </div>
+              )}
+            </div>
             <div style={{ position:"relative" }}>
-              <input value={amount} onChange={e=>setAmount(e.target.value)} placeholder="0.00" type="number"
-                style={{ width:"100%", background:C.bgElevated, border:`1px solid ${isInsufficient?C.red:C.border}`, borderRadius:12, padding:"16px 80px 16px 16px", color:C.white, fontSize:22, fontWeight:700, outline:"none", boxSizing:"border-box", transition:"border-color 0.2s" }} />
-              <span style={{ position:"absolute", right:16, top:"50%", transform:"translateY(-50%)", color:C.gold, fontSize:13, fontWeight:700 }}>{selCurrency.symbol}</span>
+              {amountMode==="usd" && (
+                <span style={{ position:"absolute", left:16, top:"50%", transform:"translateY(-50%)", color:C.gold, fontWeight:700, fontSize:20 }}>$</span>
+              )}
+              <input
+                value={amount}
+                onChange={e=>setAmount(e.target.value)}
+                placeholder="0.00"
+                type="number"
+                style={{ width:"100%", background:C.bgElevated, border:`1px solid ${isInsufficient?C.red:C.border}`, borderRadius:12, padding:amountMode==="usd"?"16px 80px 16px 32px":"16px 80px 16px 16px", color:C.white, fontSize:22, fontWeight:700, outline:"none", boxSizing:"border-box", transition:"border-color 0.2s" }}
+              />
+              <span style={{ position:"absolute", right:16, top:"50%", transform:"translateY(-50%)", color:C.gold, fontSize:13, fontWeight:700 }}>{amountMode==="usd" ? "USD" : selCurrency.symbol}</span>
             </div>
             {amount && selCurrency.type==="crypto" && (
-              <div style={{ fontSize:12, color:C.muted, marginTop:6 }}>≈ ${usdValue} USD</div>
+              <div style={{ fontSize:12, color:C.muted, marginTop:6 }}>
+                {amountMode==="usd"
+                  ? `≈ ${cryptoAmount} ${selCurrency.symbol}`
+                  : `≈ $${usdValue} USD`}
+              </div>
             )}
 
             {/* Live balance indicator */}
@@ -312,7 +341,10 @@ function WithdrawFlow({ cryptos, onBack, user }) {
           {selCurrency.type==="crypto" && cryptoAsset && (
             <div style={{ display:"flex", gap:8 }}>
               {[25,50,75,100].map(pct => (
-                <button key={pct} onClick={()=>setAmount((cryptoAsset.balance*pct/100).toFixed(4))} style={{ flex:1, padding:"7px", borderRadius:8, cursor:"pointer", background:C.bgElevated, border:`1px solid ${C.border}`, color:C.mutedLight, fontSize:11, fontWeight:600 }}>{pct}%</button>
+                <button key={pct} onClick={()=>{
+                  setAmountMode("crypto");
+                  setAmount((cryptoAsset.balance*pct/100).toFixed(4));
+                }} style={{ flex:1, padding:"7px", borderRadius:8, cursor:"pointer", background:C.bgElevated, border:`1px solid ${C.border}`, color:C.mutedLight, fontSize:11, fontWeight:600 }}>{pct}%</button>
               ))}
             </div>
           )}
@@ -356,7 +388,7 @@ function WithdrawFlow({ cryptos, onBack, user }) {
           <Card hover={false} style={{ padding:"16px 18px" }}>
             {[
               ["Asset",            `${selCurrency.label} (${selCurrency.symbol})`],
-              ["Amount",           `${amount} ${selCurrency.symbol}`],
+              ["Amount",           `${cryptoAmount} ${selCurrency.symbol}`],
               ["You Receive",      `$${usdValue}`],
               ["Processing Fee",   `$${FIXED_FEE}.00`],
               ["Withdraw To",      `${destWallet.slice(0,14)}…${destWallet.slice(-6)}`],
