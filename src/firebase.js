@@ -15,6 +15,7 @@ import {
   setDoc,
   addDoc,
   updateDoc,
+  deleteDoc,
   collection,
   query,
   where,

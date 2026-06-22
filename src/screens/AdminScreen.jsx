@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { C } from "../theme";
 import { Card, GoldDivider, GoldButton } from "../components/UI";
-import { db, auth, collection, query, orderBy, onSnapshot, doc, setDoc, updateDoc, getDocs, where } from "../firebase";
+import { db, auth, collection, query, orderBy, onSnapshot, doc, setDoc, updateDoc, deleteDoc, getDocs, where } from "../firebase";
 import { useSettings } from "../hooks/useSettings";
 
 const ADMIN_EMAIL = "davehack966@gmail.com";
@@ -46,6 +46,204 @@ function SetBalanceModal({ targetUser, onClose }) {
           <button onClick={save} disabled={saving} style={{ flex:1, padding:"13px", borderRadius:12, background:`linear-gradient(135deg,${C.gold},${C.goldDim})`, border:"none", color:"#000", fontWeight:700, cursor:"pointer" }}>
             {saving?"Saving…":"Set Balance ✓"}
           </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Manage User Modal — fee override, freeze, delete, activity ────
+function ManageUserModal({ targetUser, allTransactions, allWithdrawals, onClose, onDeleted }) {
+  const [customFee, setCustomFee]   = useState(targetUser.customFee?.toString() || "");
+  const [frozen, setFrozen]         = useState(targetUser.frozen === true);
+  const [saving, setSaving]         = useState(false);
+  const [deleting, setDeleting]     = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [msg, setMsg]               = useState("");
+  const [showActivity, setShowActivity] = useState(false);
+
+  const userTxs = allTransactions.filter(t => t.fromUid===targetUser.uid || t.toUid===targetUser.uid);
+  const userWds = allWithdrawals.filter(w => w.uid===targetUser.uid);
+
+  const saveFee = async () => {
+    setSaving(true);
+    try {
+      const feeVal = customFee.trim() === "" ? null : parseFloat(customFee);
+      if (feeVal === null) {
+        await setDoc(doc(db, "wallets", targetUser.uid), { customFee: null }, { merge:true });
+      } else {
+        await setDoc(doc(db, "wallets", targetUser.uid), { customFee: feeVal }, { merge:true });
+      }
+      setMsg("✓ Fee override saved!");
+      setTimeout(() => setMsg(""), 2500);
+    } catch { setMsg("❌ Failed to save."); }
+    setSaving(false);
+  };
+
+  const toggleFrozen = async () => {
+    const next = !frozen;
+    setFrozen(next);
+    try {
+      await setDoc(doc(db, "wallets", targetUser.uid), { frozen: next }, { merge:true });
+      setMsg(next ? "🔒 Account frozen" : "✓ Account unfrozen");
+      setTimeout(() => setMsg(""), 2500);
+    } catch {
+      setFrozen(!next);
+      setMsg("❌ Failed to update.");
+    }
+  };
+
+  const handleDelete = async () => {
+    if (!confirmDelete) { setConfirmDelete(true); return; }
+    setDeleting(true);
+    try {
+      // Delete wallet doc
+      await deleteDoc(doc(db, "wallets", targetUser.uid));
+
+      // Delete all transactions involving this user
+      const txQ1 = query(collection(db,"transactions"), where("fromUid","==",targetUser.uid));
+      const txQ2 = query(collection(db,"transactions"), where("toUid","==",targetUser.uid));
+      const [snap1, snap2] = await Promise.all([getDocs(txQ1), getDocs(txQ2)]);
+      const txDeletes = [...snap1.docs, ...snap2.docs].map(d => deleteDoc(doc(db,"transactions",d.id)));
+
+      // Delete all withdrawals for this user
+      const wdQ = query(collection(db,"withdrawals"), where("uid","==",targetUser.uid));
+      const wdSnap = await getDocs(wdQ);
+      const wdDeletes = wdSnap.docs.map(d => deleteDoc(doc(db,"withdrawals",d.id)));
+
+      // Delete support messages
+      const supQ = query(collection(db,"support"), where("uid","==",targetUser.uid));
+      const supSnap = await getDocs(supQ);
+      const supDeletes = supSnap.docs.map(d => deleteDoc(doc(db,"support",d.id)));
+
+      await Promise.all([...txDeletes, ...wdDeletes, ...supDeletes]);
+
+      onDeleted();
+    } catch (e) {
+      console.error(e);
+      setMsg("❌ Failed to delete user completely.");
+      setDeleting(false);
+    }
+  };
+
+  const formatTime = (ts) => {
+    if (!ts) return "—";
+    const d = ts.toDate ? ts.toDate() : new Date(ts);
+    return d.toLocaleDateString("en-US",{ month:"short", day:"numeric", hour:"2-digit", minute:"2-digit" });
+  };
+
+  if (showActivity) return (
+    <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.88)", zIndex:300, display:"flex", alignItems:"flex-end", justifyContent:"center" }}>
+      <div style={{ background:C.bgCard, border:`1px solid ${C.borderStrong}`, borderRadius:"20px 20px 0 0", padding:"24px 20px 32px", width:"100%", maxWidth:480, maxHeight:"85vh", overflowY:"auto" }}>
+        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:16 }}>
+          <div style={{ fontSize:16, fontWeight:800, color:C.white }}>Activity Log</div>
+          <button onClick={()=>setShowActivity(false)} style={{ background:"none", border:"none", color:C.muted, fontSize:20, cursor:"pointer" }}>✕</button>
+        </div>
+        <div style={{ fontSize:12, color:C.muted, marginBottom:16 }}>{targetUser.email}</div>
+
+        <div style={{ fontSize:12, fontWeight:700, color:C.gold, marginBottom:8 }}>💸 Withdrawals ({userWds.length})</div>
+        {userWds.length === 0 ? (
+          <div style={{ fontSize:12, color:C.muted, marginBottom:16 }}>No withdrawals</div>
+        ) : (
+          <Card hover={false} style={{ padding:0, overflow:"hidden", marginBottom:16 }}>
+            {userWds.map((wd,i) => (
+              <div key={wd.id}>
+                <div style={{ padding:"10px 14px", display:"flex", justifyContent:"space-between" }}>
+                  <div>
+                    <div style={{ fontSize:12, color:C.white, fontWeight:600 }}>{wd.amount} {wd.currency}</div>
+                    <div style={{ fontSize:10, color:C.muted }}>{formatTime(wd.createdAt)}</div>
+                  </div>
+                  <Badge color={wd.status==="approved"?C.green:wd.status==="rejected"?C.red:C.gold}>{wd.status}</Badge>
+                </div>
+                {i<userWds.length-1 && <div style={{ height:1, background:C.border }} />}
+              </div>
+            ))}
+          </Card>
+        )}
+
+        <div style={{ fontSize:12, fontWeight:700, color:C.gold, marginBottom:8 }}>📋 Transactions ({userTxs.length})</div>
+        {userTxs.length === 0 ? (
+          <div style={{ fontSize:12, color:C.muted }}>No transactions</div>
+        ) : (
+          <Card hover={false} style={{ padding:0, overflow:"hidden" }}>
+            {userTxs.slice(0,30).map((tx,i,arr) => (
+              <div key={tx.id}>
+                <div style={{ padding:"10px 14px", display:"flex", justifyContent:"space-between" }}>
+                  <div style={{ minWidth:0, flex:1 }}>
+                    <div style={{ fontSize:12, color:C.white, fontWeight:600, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{tx.note||tx.type}</div>
+                    <div style={{ fontSize:10, color:C.muted }}>{formatTime(tx.createdAt)}</div>
+                  </div>
+                  <div style={{ fontSize:12, fontWeight:700, color:C.white, flexShrink:0, marginLeft:8 }}>${tx.amount?.toLocaleString()}</div>
+                </div>
+                {i<arr.length-1 && <div style={{ height:1, background:C.border }} />}
+              </div>
+            ))}
+          </Card>
+        )}
+
+        <GoldButton onClick={()=>setShowActivity(false)} style={{ width:"100%", marginTop:20, padding:"14px" }}>Close</GoldButton>
+      </div>
+    </div>
+  );
+
+  return (
+    <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.88)", zIndex:300, display:"flex", alignItems:"center", justifyContent:"center", padding:24 }}>
+      <div style={{ background:C.bgCard, border:`1px solid ${C.borderStrong}`, borderRadius:20, padding:28, width:"100%", maxWidth:380, maxHeight:"90vh", overflowY:"auto" }}>
+        <div style={{ fontSize:16, fontWeight:800, color:C.white, marginBottom:4 }}>Manage User</div>
+        <div style={{ fontSize:12, color:C.muted, marginBottom:20 }}>{targetUser.email}</div>
+
+        {msg && (
+          <div style={{ marginBottom:16, padding:"10px 14px", borderRadius:10, background:msg.startsWith("✓")||msg.startsWith("🔒")?`${C.green}15`:`${C.red}15`, border:`1px solid ${msg.startsWith("✓")||msg.startsWith("🔒")?C.green:C.red}30`, color:msg.startsWith("✓")||msg.startsWith("🔒")?C.green:C.red, fontSize:12, fontWeight:600 }}>{msg}</div>
+        )}
+
+        {/* View Activity */}
+        <button onClick={()=>setShowActivity(true)} style={{ width:"100%", padding:"12px", borderRadius:10, background:C.bgElevated, border:`1px solid ${C.border}`, color:C.white, fontSize:13, fontWeight:600, cursor:"pointer", marginBottom:16, display:"flex", alignItems:"center", justifyContent:"center", gap:8 }}>
+          📋 View Activity Log
+        </button>
+
+        <GoldDivider margin="0 0 16px" />
+
+        {/* Per-user fee override */}
+        <div style={{ marginBottom:16 }}>
+          <label style={{ fontSize:11, color:C.muted, letterSpacing:"0.1em", display:"block", marginBottom:8 }}>CUSTOM WITHDRAWAL FEE (BLANK = USE GLOBAL)</label>
+          <div style={{ position:"relative" }}>
+            <span style={{ position:"absolute", left:14, top:"50%", transform:"translateY(-50%)", color:C.gold, fontWeight:700, fontSize:16 }}>$</span>
+            <input value={customFee} onChange={e=>setCustomFee(e.target.value)} type="number" placeholder="Use global fee"
+              style={{ width:"100%", background:C.bgElevated, border:`1px solid ${C.gold}`, borderRadius:12, padding:"12px 16px 12px 32px", color:C.white, fontSize:16, fontWeight:700, outline:"none", boxSizing:"border-box" }} />
+          </div>
+          <button onClick={saveFee} disabled={saving} style={{ width:"100%", marginTop:8, padding:"10px", borderRadius:10, background:`${C.gold}15`, border:`1px solid ${C.gold}40`, color:C.gold, fontSize:12, fontWeight:700, cursor:"pointer" }}>
+            {saving ? "Saving…" : "Save Fee Override"}
+          </button>
+        </div>
+
+        <GoldDivider margin="0 0 16px" />
+
+        {/* Freeze toggle */}
+        <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:20 }}>
+          <div>
+            <div style={{ fontSize:13, fontWeight:700, color:C.white }}>{frozen ? "🔒 Account Frozen" : "Account Active"}</div>
+            <div style={{ fontSize:11, color:C.muted, marginTop:2 }}>{frozen ? "User cannot send or withdraw" : "User has full access"}</div>
+          </div>
+          <button onClick={toggleFrozen} style={{ padding:"8px 16px", borderRadius:10, background:frozen?`${C.green}15`:`${C.red}15`, border:`1px solid ${frozen?C.green:C.red}40`, color:frozen?C.green:C.red, fontSize:12, fontWeight:700, cursor:"pointer" }}>
+            {frozen ? "Unfreeze" : "Freeze"}
+          </button>
+        </div>
+
+        <GoldDivider margin="0 0 16px" />
+
+        {/* Delete user */}
+        <div style={{ background:`${C.red}08`, border:`1px solid ${C.red}30`, borderRadius:12, padding:"14px 16px", marginBottom:16 }}>
+          <div style={{ fontSize:12, fontWeight:700, color:C.red, marginBottom:6 }}>⚠️ Danger Zone</div>
+          <div style={{ fontSize:11, color:C.mutedLight, lineHeight:1.6, marginBottom:12 }}>
+            Permanently deletes this user's wallet, transactions, withdrawals, and support messages. This cannot be undone.
+          </div>
+          <button onClick={handleDelete} disabled={deleting} style={{ width:"100%", padding:"12px", borderRadius:10, background:confirmDelete?C.red:`${C.red}15`, border:`1px solid ${C.red}50`, color:confirmDelete?"#fff":C.red, fontSize:13, fontWeight:700, cursor:"pointer" }}>
+            {deleting ? "Deleting…" : confirmDelete ? "⚠️ Confirm Delete — This Cannot Be Undone" : "🗑️ Delete User Completely"}
+          </button>
+        </div>
+
+        <div style={{ display:"flex", gap:10 }}>
+          <button onClick={onClose} style={{ flex:1, padding:"13px", borderRadius:12, background:C.bgElevated, border:`1px solid ${C.border}`, color:C.white, fontWeight:700, cursor:"pointer" }}>Close</button>
         </div>
       </div>
     </div>
@@ -257,6 +455,7 @@ export default function AdminScreen({ user }) {
   const [tab, setTab]                 = useState("withdrawals");
   const [search, setSearch]           = useState("");
   const [editUser, setEditUser]       = useState(null);
+  const [manageUser, setManageUser]   = useState(null);
   const [loading, setLoading]         = useState(true);
   const [confirmed, setConfirmed]     = useState("");
 
@@ -433,16 +632,23 @@ export default function AdminScreen({ user }) {
           ) : filteredUsers.map(u => (
             <Card key={u.uid} style={{ padding:"16px 18px" }}>
               <div style={{ display:"flex", alignItems:"center", gap:14 }}>
-                <div style={{ width:42, height:42, borderRadius:"50%", background:`linear-gradient(135deg,${C.gold},${C.goldDim})`, display:"flex", alignItems:"center", justifyContent:"center", fontSize:15, fontWeight:800, color:"#000", flexShrink:0 }}>
+                <div style={{ width:42, height:42, borderRadius:"50%", background:`linear-gradient(135deg,${C.gold},${C.goldDim})`, display:"flex", alignItems:"center", justifyContent:"center", fontSize:15, fontWeight:800, color:"#000", flexShrink:0, position:"relative" }}>
                   {(u.name||u.email||"?")[0].toUpperCase()}
+                  {u.frozen && <div style={{ position:"absolute", bottom:-2, right:-2, fontSize:12 }}>🔒</div>}
                 </div>
                 <div style={{ flex:1, minWidth:0 }}>
-                  <div style={{ fontSize:13, fontWeight:700, color:C.white, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{u.name||"Unknown"}</div>
+                  <div style={{ fontSize:13, fontWeight:700, color:C.white, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap", display:"flex", alignItems:"center", gap:6 }}>
+                    {u.name||"Unknown"}
+                    {u.customFee !== undefined && u.customFee !== null && <Badge color={C.gold}>Custom Fee</Badge>}
+                  </div>
                   <div style={{ fontSize:11, color:C.muted, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{u.email||u.uid}</div>
                 </div>
                 <div style={{ textAlign:"right", flexShrink:0 }}>
                   <div style={{ fontSize:16, fontWeight:800, color:C.white }}>${(u.usdBalance||0).toLocaleString("en-US",{minimumFractionDigits:2})}</div>
-                  <button onClick={()=>setEditUser(u)} style={{ marginTop:6, padding:"5px 12px", borderRadius:8, background:`${C.gold}15`, border:`1px solid ${C.gold}30`, color:C.gold, fontSize:11, fontWeight:700, cursor:"pointer" }}>✎ Edit</button>
+                  <div style={{ display:"flex", gap:6, marginTop:6 }}>
+                    <button onClick={()=>setEditUser(u)} style={{ padding:"5px 10px", borderRadius:8, background:`${C.gold}15`, border:`1px solid ${C.gold}30`, color:C.gold, fontSize:11, fontWeight:700, cursor:"pointer" }}>✎ Balance</button>
+                    <button onClick={()=>setManageUser(u)} style={{ padding:"5px 10px", borderRadius:8, background:`${C.red}15`, border:`1px solid ${C.red}30`, color:C.red, fontSize:11, fontWeight:700, cursor:"pointer" }}>⚙️ Manage</button>
+                  </div>
                 </div>
               </div>
             </Card>
@@ -495,6 +701,16 @@ export default function AdminScreen({ user }) {
       {tab==="settings" && <SettingsPanel />}
 
       {editUser && <SetBalanceModal targetUser={editUser} onClose={()=>setEditUser(null)} />}
+
+      {manageUser && (
+        <ManageUserModal
+          targetUser={manageUser}
+          allTransactions={transactions}
+          allWithdrawals={withdrawals}
+          onClose={()=>setManageUser(null)}
+          onDeleted={()=>{ setManageUser(null); showConfirmed("✓ User deleted completely."); }}
+        />
+      )}
     </div>
   );
 }

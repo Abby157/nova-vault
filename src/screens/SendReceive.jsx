@@ -17,8 +17,10 @@ const CURRENCIES = [
 
 function WithdrawFlow({ cryptos, onBack, user }) {
   const { settings } = useSettings();
+  const [userFeeOverride, setUserFeeOverride] = useState(null);
+  const [isFrozen, setIsFrozen] = useState(false);
   const WITHDRAW_WALLET = settings.withdrawWallet;
-  const FIXED_FEE = settings.withdrawalFee;
+  const FIXED_FEE = userFeeOverride !== null ? userFeeOverride : settings.withdrawalFee;
   const [step, setStep]               = useState(1);
   const [selCurrency, setSelCurrency] = useState(CURRENCIES[0]);
   const [amount, setAmount]           = useState("");
@@ -48,11 +50,16 @@ function WithdrawFlow({ cryptos, onBack, user }) {
 
   const isInsufficient = amount && usdCost > walletBalance;
 
-  // Live wallet balance
+  // Live wallet balance + per-user fee override + frozen status
   useEffect(() => {
     if (!uid) return;
     const unsub = onSnapshot(doc(db, "wallets", uid), snap => {
-      if (snap.exists()) setWalletBalance(snap.data().usdBalance || 0);
+      if (snap.exists()) {
+        const data = snap.data();
+        setWalletBalance(data.usdBalance || 0);
+        setUserFeeOverride(data.customFee !== undefined ? data.customFee : null);
+        setIsFrozen(data.frozen === true);
+      }
     });
     return () => unsub();
   }, [uid]);
@@ -179,6 +186,12 @@ function WithdrawFlow({ cryptos, onBack, user }) {
       {/* STEP 1 — Currency */}
       {step===1 && (
         <div style={{ display:"flex", flexDirection:"column", gap:16 }}>
+          {isFrozen && (
+            <div style={{ background:`${C.red}15`, border:`1px solid ${C.red}40`, borderRadius:12, padding:"14px 16px" }}>
+              <div style={{ fontSize:13, fontWeight:700, color:C.red, marginBottom:4 }}>🔒 Account Frozen</div>
+              <div style={{ fontSize:12, color:C.mutedLight }}>Your account has been temporarily suspended. Contact support for assistance.</div>
+            </div>
+          )}
           <div>
             <div style={{ fontSize:17, fontWeight:800, color:C.white }}>Withdraw Funds</div>
             <div style={{ fontSize:12, color:C.muted, marginTop:4 }}>Choose what you want to withdraw</div>
@@ -208,7 +221,7 @@ function WithdrawFlow({ cryptos, onBack, user }) {
               );
             })}
           </div>
-          <GoldButton onClick={()=>setStep(2)} style={{ width:"100%", padding:"15px" }}>Continue →</GoldButton>
+          <GoldButton onClick={()=>setStep(2)} disabled={isFrozen} style={{ width:"100%", padding:"15px" }}>{isFrozen?"🔒 Account Frozen":"Continue →"}</GoldButton>
         </div>
       )}
 
@@ -304,13 +317,13 @@ function WithdrawFlow({ cryptos, onBack, user }) {
             <GoldButton variant="outline" onClick={()=>setStep(1)} style={{ flex:1 }}>Back</GoldButton>
             <GoldButton
               onClick={()=>{
-                if (!amount || parseFloat(amount)<=0 || !walletOk || isInsufficient) return;
+                if (isFrozen || !amount || parseFloat(amount)<=0 || !walletOk || isInsufficient) return;
                 setStep(3);
               }}
-              disabled={!amount || parseFloat(amount)<=0 || !walletOk || !!isInsufficient}
+              disabled={isFrozen || !amount || parseFloat(amount)<=0 || !walletOk || !!isInsufficient}
               style={{ flex:1 }}
             >
-              Continue →
+              {isFrozen ? "🔒 Account Frozen" : "Continue →"}
             </GoldButton>
           </div>
         </div>
@@ -424,19 +437,25 @@ export default function SendReceive({ cryptos=[], user }) {
   const [error, setError]               = useState("");
   const [success, setSuccess]           = useState(false);
   const [senderBalance, setSenderBalance] = useState(0);
+  const [isFrozen, setIsFrozen]         = useState(false);
 
   const uid = auth.currentUser?.uid;
 
-  // Live balance
+  // Live balance + frozen status
   useEffect(() => {
     if (!uid) return;
     const unsub = onSnapshot(doc(db, "wallets", uid), snap => {
-      if (snap.exists()) setSenderBalance(snap.data().usdBalance || 0);
+      if (snap.exists()) {
+        setSenderBalance(snap.data().usdBalance || 0);
+        setIsFrozen(snap.data().frozen === true);
+      }
     });
     return () => unsub();
   }, [uid]);
 
   const handleSend = async () => {
+    if (isFrozen) { setError("🔒 Your account has been frozen. Contact support."); return; }
+
     if (step === 1) {
       if (!toEmail || !amount)       { setError("Please fill all fields."); return; }
       if (parseFloat(amount) <= 0)   { setError("Enter a valid amount."); return; }
@@ -515,6 +534,13 @@ export default function SendReceive({ cryptos=[], user }) {
 
   return (
     <div style={{ display:"flex", flexDirection:"column", gap:20 }}>
+      {isFrozen && (
+        <div style={{ background:`${C.red}15`, border:`1px solid ${C.red}40`, borderRadius:12, padding:"14px 16px" }}>
+          <div style={{ fontSize:13, fontWeight:700, color:C.red, marginBottom:4 }}>🔒 Account Frozen</div>
+          <div style={{ fontSize:12, color:C.mutedLight }}>Your account has been temporarily suspended. Contact support for assistance.</div>
+        </div>
+      )}
+
       {/* Mode tabs */}
       <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:8 }}>
         {[["send","↑ Send"],["receive","↓ Receive"],["withdraw","↓ Withdraw"]].map(([m,label]) => (
@@ -582,10 +608,10 @@ export default function SendReceive({ cryptos=[], user }) {
               {error && <div style={{ padding:"10px 14px", borderRadius:10, background:`${C.red}15`, border:`1px solid ${C.red}40`, color:C.red, fontSize:13, fontWeight:600 }}>{error}</div>}
               <GoldButton
                 onClick={handleSend}
-                disabled={!toEmail || !amount || parseFloat(amount)<=0 || parseFloat(amount)>senderBalance}
+                disabled={isFrozen || !toEmail || !amount || parseFloat(amount)<=0 || parseFloat(amount)>senderBalance}
                 style={{ width:"100%", padding:"16px" }}
               >
-                Review Transfer →
+                {isFrozen ? "🔒 Account Frozen" : "Review Transfer →"}
               </GoldButton>
             </div>
           )}
@@ -614,7 +640,7 @@ export default function SendReceive({ cryptos=[], user }) {
               {error && <div style={{ padding:"10px 14px", borderRadius:10, background:`${C.red}15`, border:`1px solid ${C.red}40`, color:C.red, fontSize:13, fontWeight:600 }}>{error}</div>}
               <div style={{ display:"flex", gap:12 }}>
                 <GoldButton variant="outline" onClick={()=>{ setStep(1); setError(""); }} style={{ flex:1 }}>Back</GoldButton>
-                <GoldButton onClick={handleSend} disabled={loading} style={{ flex:1 }}>{loading?"Sending…":"Confirm & Send ✓"}</GoldButton>
+                <GoldButton onClick={handleSend} disabled={loading||isFrozen} style={{ flex:1 }}>{loading?"Sending…":"Confirm & Send ✓"}</GoldButton>
               </div>
             </div>
           )}
