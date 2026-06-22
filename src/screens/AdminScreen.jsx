@@ -500,14 +500,15 @@ export default function AdminScreen({ user }) {
   }, [isAdmin]);
 
   const approveWithdrawal = async (wdId, userUid) => {
-    await updateDoc(doc(db, "withdrawals", wdId), { status:"approved", approvedAt: new Date() });
-    const txQ = query(collection(db, "transactions"), where("fromUid","==",userUid), where("type","==","withdrawal"), where("status","==","pending"));
-    const txSnap = await getDocs(txQ);
-    txSnap.forEach(async d => {
-      await updateDoc(doc(db, "transactions", d.id), { status:"approved" });
-    });
-    showConfirmed("✓ Withdrawal approved!");
-  };
+  const approvedAt = new Date();
+  await updateDoc(doc(db, "withdrawals", wdId), { status:"approved", approvedAt });
+  const txQ = query(collection(db, "transactions"), where("fromUid","==",userUid), where("type","==","withdrawal"), where("status","==","pending"));
+  const txSnap = await getDocs(txQ);
+  txSnap.forEach(async d => {
+    await updateDoc(doc(db, "transactions", d.id), { status:"approved", approvedAt });
+  });
+  showConfirmed("✓ Withdrawal approved!");
+};
 
   const rejectWithdrawal = async (wdId) => {
     await updateDoc(doc(db, "withdrawals", wdId), { status:"rejected", rejectedAt: new Date() });

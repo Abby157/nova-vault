@@ -72,7 +72,7 @@ async function downloadReceipt(tx, uid, userEmail) {
   y += 30;
   const rows = [
     ["Reference Number", tx.refNumber || tx.id || "—"],
-    ["Date & Time", formatDate(tx.createdAt)],
+    ["Date Submitted", formatDate(tx.createdAt)],
     ["Status", (tx.status || "completed").toUpperCase()],
     ["Amount", `$${Number(tx.amount || 0).toLocaleString("en-US", { minimumFractionDigits: 2 })}`],
     ["Account Holder", userEmail || "—"],
@@ -81,6 +81,14 @@ async function downloadReceipt(tx, uid, userEmail) {
   if (isWithdraw) {
     rows.push(["Destination Wallet", tx.toEmail || "—"]);
     rows.push(["Method", "Crypto Withdrawal"]);
+    if (tx.status === "approved") {
+      rows.push(["Approved By", "NOVA Vault Compliance Team"]);
+      rows.push(["Approval Date", formatDate(tx.approvedAt || tx.createdAt)]);
+    } else if (tx.status === "rejected") {
+      rows.push(["Rejected Date", formatDate(tx.rejectedAt || tx.createdAt)]);
+    } else {
+      rows.push(["Est. Completion", "1–3 business days from submission"]);
+    }
   } else if (isReceive) {
     rows.push(["From", tx.fromName || tx.fromEmail || "—"]);
   } else if (tx.type === "send") {
@@ -101,7 +109,23 @@ async function downloadReceipt(tx, uid, userEmail) {
     y += 26;
   });
 
-  y += 20;
+  // Verification stamp for approved/completed transactions
+  if (tx.status === "approved" || tx.status === "completed") {
+    doc.setDrawColor(...gold);
+    doc.setLineWidth(2);
+    doc.roundedRect(400, y - 10, 155, 50, 4, 4);
+    doc.setTextColor(...gold);
+    doc.setFontSize(11);
+    doc.setFont("helvetica", "bold");
+    doc.text("✓ VERIFIED", 477, y + 12, { align: "center" });
+    doc.setFontSize(7);
+    doc.setFont("helvetica", "normal");
+    doc.text("NOVA VAULT COMPLIANCE", 477, y + 24, { align: "center" });
+    y += 60;
+  } else {
+    y += 20;
+  }
+
   doc.setDrawColor(220, 220, 220);
   doc.setLineWidth(0.5);
   doc.line(40, y, 555, y);
@@ -230,14 +254,9 @@ export default function TransactionScreen() {
   const uid = auth.currentUser?.uid;
   const userEmail = auth.currentUser?.email;
 
-  console.log("🔍 Current uid for transactions query:", uid);
-
   // Load real transactions from Firestore
   useEffect(() => {
-    if (!uid) {
-      console.warn("⚠️ No uid available — skipping transaction query");
-      return;
-    }
+    if (!uid) return;
     const txMap = new Map();
     const update = () => {
       setTransactions(
@@ -249,17 +268,15 @@ export default function TransactionScreen() {
     // Sent / withdrawals / trades
     const q1 = query(collection(db,"transactions"), where("fromUid","==",uid));
     const unsub1 = onSnapshot(q1, snap => {
-      console.log("✅ Sent/withdrawal results (fromUid):", snap.size, "docs");
       snap.forEach(d => txMap.set(d.id,{id:d.id,...d.data()}));
       update();
-    }, err => console.error("❌ Query 1 (fromUid) error:", err));
+    });
     // Received
     const q2 = query(collection(db,"transactions"), where("toUid","==",uid));
     const unsub2 = onSnapshot(q2, snap => {
-      console.log("✅ Received results (toUid):", snap.size, "docs");
       snap.forEach(d => txMap.set(d.id,{id:d.id,...d.data()}));
       update();
-    }, err => console.error("❌ Query 2 (toUid) error:", err));
+    });
     return () => { unsub1(); unsub2(); };
   }, [uid]);
 
