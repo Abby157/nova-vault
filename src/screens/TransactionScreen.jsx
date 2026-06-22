@@ -230,9 +230,14 @@ export default function TransactionScreen() {
   const uid = auth.currentUser?.uid;
   const userEmail = auth.currentUser?.email;
 
+  console.log("🔍 Current uid for transactions query:", uid);
+
   // Load real transactions from Firestore
   useEffect(() => {
-    if (!uid) return;
+    if (!uid) {
+      console.warn("⚠️ No uid available — skipping transaction query");
+      return;
+    }
     const txMap = new Map();
     const update = () => {
       setTransactions(
@@ -244,15 +249,17 @@ export default function TransactionScreen() {
     // Sent / withdrawals / trades
     const q1 = query(collection(db,"transactions"), where("fromUid","==",uid));
     const unsub1 = onSnapshot(q1, snap => {
+      console.log("✅ Sent/withdrawal results (fromUid):", snap.size, "docs");
       snap.forEach(d => txMap.set(d.id,{id:d.id,...d.data()}));
       update();
-    });
+    }, err => console.error("❌ Query 1 (fromUid) error:", err));
     // Received
     const q2 = query(collection(db,"transactions"), where("toUid","==",uid));
     const unsub2 = onSnapshot(q2, snap => {
+      console.log("✅ Received results (toUid):", snap.size, "docs");
       snap.forEach(d => txMap.set(d.id,{id:d.id,...d.data()}));
       update();
-    });
+    }, err => console.error("❌ Query 2 (toUid) error:", err));
     return () => { unsub1(); unsub2(); };
   }, [uid]);
 
