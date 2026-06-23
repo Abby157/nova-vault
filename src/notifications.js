@@ -68,6 +68,13 @@ export const Emails = {
     message:  `A new withdrawal request has been submitted.\n\nUser: ${user.name}\nEmail: ${user.email}\nAmount: ${amount} ${currency}\nDestination: ${destWallet}\n\nLog in to the Admin Panel to review and approve/reject this request.`,
   }),
 
+  withdrawalRejected: (user, amount, symbol, reason) => ({
+  to_email: user.email,
+  to_name:  user.name,
+  subject:  "Withdrawal Request Update",
+  message:  `Your withdrawal request of ${amount} ${symbol} could not be processed.\n\nReason: ${reason}\n\nWhat to do next:\nPlease review the reason above and resubmit your withdrawal request with the correct information. If you believe this is an error, contact our support team for assistance.\n\nWe apologize for any inconvenience.`,
+}),
+
   adminGiftCardAlert: (user, cardLabel, amount) => ({
     to_email: ADMIN_EMAIL,
     to_name:  "Admin",
