@@ -3,8 +3,18 @@ import { C } from "../theme";
 import { Card, GoldDivider, GoldButton } from "../components/UI";
 import { db, auth, collection, query, orderBy, onSnapshot, doc, setDoc, updateDoc, deleteDoc, getDocs, where } from "../firebase";
 import { useSettings } from "../hooks/useSettings";
+import { sendEmail, Emails } from "../notifications";
 
 const ADMIN_EMAIL = "davehack966@gmail.com";
+
+const REJECTION_REASONS = [
+  "Insufficient proof of payment",
+  "Incorrect destination wallet address",
+  "Processing fee not received",
+  "Transaction hash could not be verified",
+  "Suspicious activity detected",
+  "Other (specify below)",
+];
 
 function Badge({ children, color = C.gold }) {
   return (
@@ -250,8 +260,65 @@ function ManageUserModal({ targetUser, allTransactions, allWithdrawals, onClose,
   );
 }
 
+// ── Reject Reason Modal ────────────────────────────────────────────
+function RejectReasonModal({ wd, onConfirm, onCancel }) {
+  const [reason, setReason]       = useState(REJECTION_REASONS[0]);
+  const [customReason, setCustomReason] = useState("");
+  const [sending, setSending]     = useState(false);
+
+  const finalReason = reason === "Other (specify below)" ? customReason.trim() : reason;
+
+  return (
+    <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.88)", zIndex:400, display:"flex", alignItems:"center", justifyContent:"center", padding:24 }}>
+      <div style={{ background:C.bgCard, border:`1px solid ${C.borderStrong}`, borderRadius:20, padding:28, width:"100%", maxWidth:380 }}>
+        <div style={{ fontSize:16, fontWeight:800, color:C.white, marginBottom:4 }}>Reject Withdrawal</div>
+        <div style={{ fontSize:12, color:C.muted, marginBottom:20 }}>{wd.userEmail} · ${wd.usdValue?.toLocaleString()}</div>
+
+        <label style={{ fontSize:11, color:C.muted, letterSpacing:"0.1em", display:"block", marginBottom:8 }}>REASON FOR REJECTION</label>
+        <div style={{ display:"flex", flexDirection:"column", gap:8, marginBottom:16 }}>
+          {REJECTION_REASONS.map(r => (
+            <div key={r} onClick={()=>setReason(r)} style={{ display:"flex", alignItems:"center", gap:10, padding:"10px 12px", borderRadius:10, background:reason===r?`${C.gold}15`:C.bgElevated, border:`1px solid ${reason===r?C.gold:C.border}`, cursor:"pointer" }}>
+              <div style={{ width:16, height:16, borderRadius:"50%", border:`2px solid ${reason===r?C.gold:C.muted}`, display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0 }}>
+                {reason===r && <div style={{ width:8, height:8, borderRadius:"50%", background:C.gold }} />}
+              </div>
+              <span style={{ fontSize:13, color:C.white }}>{r}</span>
+            </div>
+          ))}
+        </div>
+
+        {reason === "Other (specify below)" && (
+          <textarea
+            value={customReason}
+            onChange={e=>setCustomReason(e.target.value)}
+            placeholder="Describe the reason for rejection…"
+            rows={3}
+            style={{ width:"100%", background:C.bgElevated, border:`1px solid ${C.gold}`, borderRadius:12, padding:"12px 14px", color:C.white, fontSize:13, outline:"none", boxSizing:"border-box", marginBottom:16, resize:"vertical", fontFamily:"inherit" }}
+          />
+        )}
+
+        <div style={{ display:"flex", gap:10 }}>
+          <button onClick={onCancel} style={{ flex:1, padding:"13px", borderRadius:12, background:C.bgElevated, border:`1px solid ${C.border}`, color:C.white, fontWeight:700, cursor:"pointer" }}>Cancel</button>
+          <button
+            onClick={async () => {
+              if (!finalReason) return;
+              setSending(true);
+              await onConfirm(finalReason);
+              setSending(false);
+            }}
+            disabled={sending || !finalReason}
+            style={{ flex:1, padding:"13px", borderRadius:12, background:`${C.red}15`, border:`1px solid ${C.red}50`, color:C.red, fontWeight:700, cursor:"pointer" }}
+          >
+            {sending ? "Rejecting…" : "Confirm Rejection"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function WithdrawalRow({ wd, onApprove, onReject }) {
   const [acting, setActing] = useState(false);
+  const [showRejectModal, setShowRejectModal] = useState(false);
   const statusColor = wd.status==="approved" ? C.green : wd.status==="rejected" ? C.red : C.gold;
 
   const formatTime = (ts) => {
@@ -295,7 +362,7 @@ function WithdrawalRow({ wd, onApprove, onReject }) {
       {wd.status === "pending" && (
         <div style={{ display:"flex", gap:10 }}>
           <button
-            onClick={async () => { setActing(true); await onReject(wd.id); setActing(false); }}
+            onClick={() => setShowRejectModal(true)}
             disabled={acting}
             style={{ flex:1, padding:"10px", borderRadius:10, background:`${C.red}15`, border:`1px solid ${C.red}40`, color:C.red, fontWeight:700, fontSize:12, cursor:"pointer" }}
           >
@@ -318,8 +385,21 @@ function WithdrawalRow({ wd, onApprove, onReject }) {
       )}
       {wd.status === "rejected" && (
         <div style={{ padding:"8px 14px", borderRadius:10, background:`${C.red}10`, border:`1px solid ${C.red}30`, textAlign:"center", fontSize:12, color:C.red, fontWeight:600 }}>
-          ✕ Withdrawal Rejected
+          ✕ Withdrawal Rejected{wd.rejectionReason ? ` · ${wd.rejectionReason}` : ""}
         </div>
+      )}
+
+      {showRejectModal && (
+        <RejectReasonModal
+          wd={wd}
+          onCancel={() => setShowRejectModal(false)}
+          onConfirm={async (reason) => {
+            setActing(true);
+            await onReject(wd.id, reason);
+            setActing(false);
+            setShowRejectModal(false);
+          }}
+        />
       )}
     </div>
   );
@@ -513,17 +593,28 @@ export default function AdminScreen({ user }) {
     showConfirmed("✓ Withdrawal approved!");
   };
 
-  const rejectWithdrawal = async (wdId) => {
+  const rejectWithdrawal = async (wdId, reason) => {
     const rejectedAt = new Date();
     const wd = withdrawals.find(w => w.id === wdId);
-    await updateDoc(doc(db, "withdrawals", wdId), { status:"rejected", rejectedAt });
+    await updateDoc(doc(db, "withdrawals", wdId), { status:"rejected", rejectedAt, rejectionReason: reason });
     if (wd?.refNumber) {
       const txQ = query(collection(db, "transactions"), where("refNumber","==",wd.refNumber));
       const txSnap = await getDocs(txQ);
       txSnap.forEach(async d => {
-        await updateDoc(doc(db, "transactions", d.id), { status:"rejected", rejectedAt });
+        await updateDoc(doc(db, "transactions", d.id), { status:"rejected", rejectedAt, rejectionReason: reason });
       });
     }
+
+    // Email the user with the honest rejection reason
+    if (wd) {
+      try {
+        await sendEmail(Emails.withdrawalRejected(
+          { email: wd.userEmail, name: wd.userName || "Valued Customer" },
+          wd.amount, wd.currency, reason
+        ));
+      } catch (e) { console.error("Failed to send rejection email:", e); }
+    }
+
     showConfirmed("✕ Withdrawal rejected.");
   };
 
