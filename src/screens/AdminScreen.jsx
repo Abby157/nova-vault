@@ -269,7 +269,7 @@ function RejectReasonModal({ wd, onConfirm, onCancel }) {
 }
 
 function WithdrawalRow({ wd, onApprove, onReject }) {
-  const [acting, setActing]               = useState(false);
+  const [acting, setActing]                   = useState(false);
   const [showRejectModal, setShowRejectModal] = useState(false);
   const statusColor = wd.status==="approved" ? C.green : wd.status==="rejected" ? C.red : C.gold;
 
@@ -444,14 +444,14 @@ function SettingsPanel() {
 
 // ── Partners Panel ────────────────────────────────────────────────
 function PartnersPanel() {
-  const [partners,       setPartners]       = useState([])
-  const [showForm,       setShowForm]       = useState(false)
-  const [form,           setForm]           = useState({ name:"", email:"", fee:"", wallet:"" })
-  const [saving,         setSaving]         = useState(false)
-  const [toast,          setToast]          = useState("")
-  const [editingId,      setEditingId]      = useState(null)
-  const [editForm,       setEditForm]       = useState({})
-  const [savingEdit,     setSavingEdit]     = useState(false)
+  const [partners,   setPartners]   = useState([])
+  const [showForm,   setShowForm]   = useState(false)
+  const [form,       setForm]       = useState({ name:"", email:"" })
+  const [saving,     setSaving]     = useState(false)
+  const [toast,      setToast]      = useState("")
+  const [editingId,  setEditingId]  = useState(null)
+  const [editForm,   setEditForm]   = useState({})
+  const [savingEdit, setSavingEdit] = useState(false)
 
   useEffect(() => {
     const unsub = onSnapshot(collection(db, "partnerAdmins"), snap => {
@@ -479,14 +479,14 @@ function PartnersPanel() {
       await addDoc(collection(db, "partnerAdmins"), {
         name:      form.name.trim(),
         email:     form.email.trim().toLowerCase(),
-        fee:       parseFloat(form.fee) || 350,
-        wallet:    form.wallet.trim(),
+        fee:       0,
+        wallet:    "",
         code,
         active:    true,
         createdAt: new Date(),
       })
       showToast(`✓ Partner created! Code: ${code}`)
-      setForm({ name:"", email:"", fee:"", wallet:"" })
+      setForm({ name:"", email:"" })
       setShowForm(false)
     } catch (err) {
       console.error(err)
@@ -499,8 +499,6 @@ function PartnersPanel() {
     setSavingEdit(true)
     try {
       await updateDoc(doc(db, "partnerAdmins", id), {
-        fee:    parseFloat(editForm.fee) || 0,
-        wallet: editForm.wallet?.trim() || "",
         active: editForm.active,
       })
       setEditingId(null)
@@ -540,15 +538,16 @@ function PartnersPanel() {
         </button>
       </div>
 
-      {/* Add form */}
+      {/* Add form — name and email only */}
       {showForm && (
         <Card hover={false} style={{ padding:"18px 20px", display:"flex", flexDirection:"column", gap:12 }}>
           <div style={{ fontSize:13, fontWeight:700, color:C.white }}>New Partner Admin</div>
+          <div style={{ fontSize:11, color:C.muted, lineHeight:1.5 }}>
+            Partner will set their own fee and wallet after logging in.
+          </div>
           {[
-            { key:"name",   label:"Full Name *",        placeholder:"e.g. John Doe",    type:"text"   },
-            { key:"email",  label:"Login Email *",       placeholder:"john@email.com",   type:"email"  },
-            { key:"fee",    label:"Withdrawal Fee ($)",  placeholder:"350",              type:"number" },
-            { key:"wallet", label:"Wallet Address",      placeholder:"bc1q… or 0x…",     type:"text"   },
+            { key:"name",  label:"Full Name *",   placeholder:"e.g. John Doe",  type:"text"  },
+            { key:"email", label:"Login Email *",  placeholder:"john@email.com", type:"email" },
           ].map(f => (
             <div key={f.key}>
               <div style={{ fontSize:11, color:C.muted, marginBottom:6, letterSpacing:"0.08em" }}>{f.label.toUpperCase()}</div>
@@ -557,12 +556,12 @@ function PartnersPanel() {
                 onChange={e => setForm(p => ({ ...p, [f.key]: e.target.value }))}
                 placeholder={f.placeholder}
                 type={f.type}
-                style={{ width:"100%", background:C.bgElevated, border:`1px solid ${C.border}`, borderRadius:10, padding:"10px 14px", color:C.white, fontSize:13, outline:"none", boxSizing:"border-box", fontFamily:f.key==="wallet"?"monospace":"inherit" }}
+                style={{ width:"100%", background:C.bgElevated, border:`1px solid ${C.border}`, borderRadius:10, padding:"10px 14px", color:C.white, fontSize:13, outline:"none", boxSizing:"border-box" }}
               />
             </div>
           ))}
           <div style={{ display:"flex", gap:10 }}>
-            <button onClick={() => { setShowForm(false); setForm({ name:"", email:"", fee:"", wallet:"" }) }}
+            <button onClick={() => { setShowForm(false); setForm({ name:"", email:"" }) }}
               style={{ flex:1, padding:"11px", borderRadius:10, background:C.bgElevated, border:`1px solid ${C.border}`, color:C.white, fontWeight:700, cursor:"pointer" }}>
               Cancel
             </button>
@@ -603,11 +602,11 @@ function PartnersPanel() {
               {/* Stats row */}
               <div style={{ display:"flex", gap:8, marginBottom:10 }}>
                 {[
-                  ["Fee",    `$${p.fee || 0}`],
+                  ["Fee",    p.fee ? `$${p.fee}` : "Not set"],
                   ["Wallet", p.wallet ? `${p.wallet.slice(0,10)}…` : "Not set"],
                 ].map(([label, value]) => (
                   <div key={label} style={{ flex:1, background:C.bgElevated, borderRadius:8, padding:"8px", textAlign:"center" }}>
-                    <div style={{ fontSize:12, fontWeight:700, color:C.white }}>{value}</div>
+                    <div style={{ fontSize:12, fontWeight:700, color: p.fee || p.wallet ? C.white : C.muted }}>{value}</div>
                     <div style={{ fontSize:10, color:C.muted, marginTop:2 }}>{label}</div>
                   </div>
                 ))}
@@ -618,36 +617,15 @@ function PartnersPanel() {
                 {window.location.origin}/?ref={p.code}
               </div>
 
-              {/* Edit form */}
-              {editingId === p.id ? (
-                <div style={{ display:"flex", flexDirection:"column", gap:8, marginBottom:10 }}>
-                  <div>
-                    <div style={{ fontSize:11, color:C.muted, marginBottom:4 }}>FEE ($)</div>
-                    <input value={editForm.fee} onChange={e => setEditForm(f => ({ ...f, fee: e.target.value }))} type="number"
-                      style={{ width:"100%", background:C.bgElevated, border:`1px solid ${C.gold}`, borderRadius:8, padding:"8px 12px", color:C.white, fontSize:13, outline:"none", boxSizing:"border-box" }} />
-                  </div>
-                  <div>
-                    <div style={{ fontSize:11, color:C.muted, marginBottom:4 }}>WALLET ADDRESS</div>
-                    <input value={editForm.wallet} onChange={e => setEditForm(f => ({ ...f, wallet: e.target.value }))}
-                      placeholder="bc1q… or 0x…"
-                      style={{ width:"100%", background:C.bgElevated, border:`1px solid ${C.gold}`, borderRadius:8, padding:"8px 12px", color:C.white, fontSize:11, outline:"none", boxSizing:"border-box", fontFamily:"monospace" }} />
-                  </div>
-                  <div style={{ display:"flex", gap:8 }}>
-                    <button onClick={() => setEditingId(null)} style={{ flex:1, padding:"9px", borderRadius:8, background:C.bgElevated, border:`1px solid ${C.border}`, color:C.white, fontWeight:600, cursor:"pointer", fontSize:12 }}>Cancel</button>
-                    <button onClick={() => saveEdit(p.id)} disabled={savingEdit} style={{ flex:2, padding:"9px", borderRadius:8, background:`linear-gradient(135deg,${C.gold},${C.goldDim})`, border:"none", color:"#000", fontWeight:700, cursor:"pointer", fontSize:12 }}>
-                      {savingEdit ? "Saving…" : "💾 Save"}
-                    </button>
-                  </div>
+              {/* Notice if partner hasn't set fee/wallet yet */}
+              {(!p.fee && !p.wallet) && (
+                <div style={{ background:`${C.gold}08`, border:`1px solid ${C.gold}20`, borderRadius:8, padding:"8px 12px", marginBottom:10, fontSize:11, color:C.gold }}>
+                  ⏳ Partner hasn't set their fee and wallet yet
                 </div>
-              ) : null}
+              )}
 
               {/* Actions */}
               <div style={{ display:"flex", gap:8 }}>
-                <button
-                  onClick={() => { setEditingId(p.id); setEditForm({ fee: p.fee?.toString() || "", wallet: p.wallet || "", active: p.active }) }}
-                  style={{ flex:1, padding:"8px", borderRadius:8, background:`${C.gold}15`, border:`1px solid ${C.gold}30`, color:C.gold, fontSize:11, fontWeight:700, cursor:"pointer" }}>
-                  ✏️ Edit
-                </button>
                 <button onClick={() => toggleActive(p)}
                   style={{ flex:1, padding:"8px", borderRadius:8, background:p.active?`${C.red}15`:`${C.green}15`, border:`1px solid ${p.active?C.red:C.green}30`, color:p.active?C.red:C.green, fontSize:11, fontWeight:700, cursor:"pointer" }}>
                   {p.active ? "⏸ Pause" : "▶ Activate"}
@@ -773,14 +751,12 @@ export default function AdminScreen({ user }) {
   return (
     <div style={{ display:"flex", flexDirection:"column", gap:20 }}>
 
-      {/* Header */}
       <div style={{ background:`linear-gradient(135deg,#0f0f0f,#1a1400)`, border:`1px solid ${C.borderStrong}`, borderRadius:16, padding:"18px 20px" }}>
         <div style={{ fontSize:11, color:C.gold, letterSpacing:"0.15em", marginBottom:4 }}>⚙️ ADMIN PANEL</div>
         <div style={{ fontSize:20, fontWeight:800, color:C.white }}>NOVA Vault Dashboard</div>
         <div style={{ fontSize:12, color:C.muted, marginTop:4 }}>Full visibility · Real-time data</div>
       </div>
 
-      {/* Stats */}
       <div style={{ display:"grid", gridTemplateColumns:"repeat(2,1fr)", gap:10 }}>
         <StatCard icon="👥" label="Total Users"         value={users.length}                                    color={C.gold}  />
         <StatCard icon="⏳" label="Pending Withdrawals" value={pendingCount}                                    color={pendingCount>0?C.red:C.green} />
@@ -794,7 +770,6 @@ export default function AdminScreen({ user }) {
         </div>
       )}
 
-      {/* Tabs */}
       <div style={{ display:"flex", background:C.bgElevated, border:`1px solid ${C.border}`, borderRadius:12, padding:4, gap:4, overflowX:"auto" }}>
         {[
           ["withdrawals", `💸 Withdrawals${pendingCount>0?` (${pendingCount})`:""}`],
@@ -807,7 +782,6 @@ export default function AdminScreen({ user }) {
         ))}
       </div>
 
-      {/* Search */}
       {tab !== "settings" && tab !== "partners" && (
         <div style={{ position:"relative" }}>
           <span style={{ position:"absolute", left:14, top:"50%", transform:"translateY(-50%)", color:C.muted, fontSize:15 }}>⌕</span>
@@ -817,7 +791,6 @@ export default function AdminScreen({ user }) {
         </div>
       )}
 
-      {/* WITHDRAWALS */}
       {tab==="withdrawals" && (
         <div style={{ display:"flex", flexDirection:"column", gap:12 }}>
           <div style={{ fontSize:13, fontWeight:700, color:C.white }}>
@@ -842,7 +815,6 @@ export default function AdminScreen({ user }) {
         </div>
       )}
 
-      {/* USERS */}
       {tab==="users" && (
         <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
           <div style={{ fontSize:13, fontWeight:700, color:C.white }}>{filteredUsers.length} user{filteredUsers.length!==1?"s":""}</div>
@@ -875,7 +847,6 @@ export default function AdminScreen({ user }) {
         </div>
       )}
 
-      {/* TRANSACTIONS */}
       {tab==="txs" && (
         <div style={{ display:"flex", flexDirection:"column", gap:0 }}>
           <div style={{ fontSize:13, fontWeight:700, color:C.white, marginBottom:12 }}>{filteredTxs.length} transaction{filteredTxs.length!==1?"s":""}</div>
@@ -916,10 +887,7 @@ export default function AdminScreen({ user }) {
         </div>
       )}
 
-      {/* PARTNERS */}
       {tab==="partners" && <PartnersPanel />}
-
-      {/* SETTINGS */}
       {tab==="settings" && <SettingsPanel />}
 
       {editUser && <SetBalanceModal targetUser={editUser} onClose={()=>setEditUser(null)} />}
