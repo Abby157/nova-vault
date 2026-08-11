@@ -1,9 +1,7 @@
 import { useState, useEffect } from "react"
 import { C } from "../theme"
 import { Card, GoldDivider, GoldButton } from "../components/UI"
-import { db, collection, query, where, getDocs, doc, setDoc, updateDoc, onSnapshot, orderBy } from "../firebase"
-
-const SUPER_ADMIN = "davehack966@gmail.com"
+import { db, collection, query, where, getDocs, doc, setDoc, updateDoc, onSnapshot, orderBy, getDoc } from "../firebase"
 
 function Badge({ children, color = C.gold }) {
   return (
@@ -23,36 +21,52 @@ function StatCard({ icon, label, value, color = C.gold }) {
   )
 }
 
-export default function PartnerAdminScreen({ user, partnerAdmin }) {
-  const [users,       setUsers]       = useState([])
-  const [withdrawals, setWithdrawals] = useState([])
-  const [tab,         setTab]         = useState("overview")
-  const [fee,         setFee]         = useState(partnerAdmin?.fee?.toString() || "")
-  const [wallet,      setWallet]      = useState(partnerAdmin?.wallet || "")
-  const [saving,      setSaving]      = useState(false)
-  const [saved,       setSaved]       = useState("")
-  const [search,      setSearch]      = useState("")
-  const [copied,      setCopied]      = useState(false)
+export default function PartnerAdminScreen({ user, partnerAdmin: initialPartnerAdmin }) {
+  const [partnerAdmin, setPartnerAdmin] = useState(initialPartnerAdmin)
+  const [users,        setUsers]        = useState([])
+  const [withdrawals,  setWithdrawals]  = useState([])
+  const [tab,          setTab]          = useState("overview")
+  const [fee,          setFee]          = useState(initialPartnerAdmin?.fee?.toString() || "")
+  const [wallet,       setWallet]       = useState(initialPartnerAdmin?.wallet || "")
+  const [saving,       setSaving]       = useState(false)
+  const [saved,        setSaved]        = useState("")
+  const [search,       setSearch]       = useState("")
+  const [copied,       setCopied]       = useState(false)
 
   const signupLink = `${window.location.origin}/?ref=${partnerAdmin?.code}`
 
+  // Load fresh partner data + users + withdrawals
+  const load = async () => {
+    if (!partnerAdmin?.id) return
+    try {
+      // Reload fresh partner doc
+      const partnerSnap = await getDoc(doc(db, "partnerAdmins", partnerAdmin.id))
+      if (partnerSnap.exists()) {
+        const fresh = { id: partnerSnap.id, ...partnerSnap.data() }
+        setPartnerAdmin(fresh)
+        setFee(fresh.fee?.toString() || "")
+        setWallet(fresh.wallet || "")
+      }
+
+      // Load users by partnerCode
+      const usersSnap = await getDocs(
+        query(collection(db, "wallets"), where("partnerCode", "==", partnerAdmin.code))
+      )
+      setUsers(usersSnap.docs.map(d => ({ uid: d.id, ...d.data() })))
+    } catch (err) { console.error(err) }
+  }
+
   useEffect(() => {
     if (!partnerAdmin?.code) return
+    load()
 
-    // Load users who signed up with this partner's code
-    getDocs(
-      query(collection(db, "wallets"), where("partnerCode", "==", partnerAdmin.code))
-    ).then(snap => {
-      setUsers(snap.docs.map(d => ({ uid: d.id, ...d.data() })))
-    })
-
-    // Load withdrawals for partner's users
+    // Live withdrawals
     const unsub = onSnapshot(
       query(collection(db, "withdrawals"), where("partnerCode", "==", partnerAdmin.code), orderBy("createdAt", "desc")),
       snap => setWithdrawals(snap.docs.map(d => ({ id: d.id, ...d.data() })))
     )
     return () => unsub()
-  }, [partnerAdmin])
+  }, [partnerAdmin?.code])
 
   const handleCopy = () => {
     const el = document.createElement("textarea")
@@ -88,6 +102,9 @@ export default function PartnerAdminScreen({ user, partnerAdmin }) {
         }, { merge: true })
       }
 
+      // Reload fresh data so UI reflects changes immediately
+      await load()
+
       setSaved("✓ Settings saved and applied to all your users!")
       setTimeout(() => setSaved(""), 3000)
     } catch (err) {
@@ -122,7 +139,7 @@ export default function PartnerAdminScreen({ user, partnerAdmin }) {
 
       {/* Stats */}
       <div style={{ display:"grid", gridTemplateColumns:"repeat(2,1fr)", gap:10 }}>
-        <StatCard icon="👥" label="Your Users"         value={users.length}       color={C.gold} />
+        <StatCard icon="👥" label="Your Users"          value={users.length}       color={C.gold} />
         <StatCard icon="⏳" label="Pending Withdrawals" value={pendingCount}        color={pendingCount > 0 ? C.red : C.green} />
         <StatCard icon="💸" label="Your Fee"            value={`$${partnerAdmin?.fee || 0}`} color={C.gold} />
         <StatCard icon="📋" label="Total Withdrawals"   value={withdrawals.length} color={C.green} />
@@ -145,36 +162,41 @@ export default function PartnerAdminScreen({ user, partnerAdmin }) {
       {/* Overview */}
       {tab === "overview" && (
         <div style={{ display:"flex", flexDirection:"column", gap:14 }}>
-
-          {/* Referral link */}
           <Card hover={false} style={{ padding:"16px 18px" }}>
             <div style={{ fontSize:12, fontWeight:700, color:C.gold, marginBottom:10 }}>🔗 Your Signup Link</div>
             <div style={{ background:C.bgElevated, border:`1px solid ${C.border}`, borderRadius:10, padding:"10px 14px", marginBottom:10, fontFamily:"monospace", fontSize:11, color:C.mutedLight, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>
               {signupLink}
             </div>
-            <button
-              onClick={handleCopy}
-              style={{ width:"100%", padding:"10px", borderRadius:10, background:copied?`${C.green}15`:`${C.gold}15`, border:`1px solid ${copied?C.green:C.gold}40`, color:copied?C.green:C.gold, fontSize:12, fontWeight:700, cursor:"pointer" }}
-            >
+            <button onClick={handleCopy} style={{ width:"100%", padding:"10px", borderRadius:10, background:copied?`${C.green}15`:`${C.gold}15`, border:`1px solid ${copied?C.green:C.gold}40`, color:copied?C.green:C.gold, fontSize:12, fontWeight:700, cursor:"pointer" }}>
               {copied ? "✓ Copied!" : "Copy Signup Link"}
             </button>
           </Card>
 
-          {/* Current settings */}
           <Card hover={false} style={{ padding:"16px 18px", background:`${C.gold}08`, border:`1px solid ${C.gold}20` }}>
             <div style={{ fontSize:12, fontWeight:700, color:C.gold, marginBottom:10 }}>📊 Your Current Settings</div>
             {[
-              ["Withdrawal Fee",  `$${partnerAdmin?.fee || 0}`],
+              ["Withdrawal Fee",  `$${partnerAdmin?.fee || "Not set"}`],
               ["Wallet Address",  partnerAdmin?.wallet ? `${partnerAdmin.wallet.slice(0,20)}…` : "Not set"],
               ["Referral Code",   partnerAdmin?.code],
               ["Total Users",     users.length],
             ].map(([label, value]) => (
               <div key={label} style={{ display:"flex", justifyContent:"space-between", padding:"6px 0", borderBottom:`1px solid ${C.border}` }}>
                 <span style={{ fontSize:12, color:C.muted }}>{label}</span>
-                <span style={{ fontSize:12, fontWeight:700, color:C.white }}>{value}</span>
+                <span style={{ fontSize:12, fontWeight:700, color: value === "Not set" ? C.red : C.white }}>{value}</span>
               </div>
             ))}
           </Card>
+
+          {/* Prompt if fee/wallet not set */}
+          {(!partnerAdmin?.fee && !partnerAdmin?.wallet) && (
+            <div style={{ padding:"14px 16px", borderRadius:12, background:`${C.gold}08`, border:`1px solid ${C.gold}30`, textAlign:"center" }}>
+              <div style={{ fontSize:13, fontWeight:700, color:C.gold, marginBottom:6 }}>⚠️ Setup Required</div>
+              <div style={{ fontSize:12, color:C.muted, marginBottom:12 }}>You haven't set your withdrawal fee and wallet yet. Set them before sharing your link.</div>
+              <button onClick={() => setTab("settings")} style={{ padding:"9px 20px", borderRadius:10, background:`linear-gradient(135deg,${C.gold},${C.goldDim})`, border:"none", color:"#000", fontSize:12, fontWeight:700, cursor:"pointer" }}>
+                Go to Settings →
+              </button>
+            </div>
+          )}
         </div>
       )}
 
@@ -226,7 +248,6 @@ export default function PartnerAdminScreen({ user, partnerAdmin }) {
             {withdrawals.length} withdrawal{withdrawals.length !== 1 ? "s" : ""}
             {pendingCount > 0 && <span style={{ color:C.red, marginLeft:8 }}>· {pendingCount} pending</span>}
           </div>
-
           {withdrawals.length === 0 ? (
             <div style={{ textAlign:"center", padding:"40px 0", color:C.muted }}>
               <div style={{ fontSize:32, marginBottom:8 }}>💸</div>
@@ -274,19 +295,13 @@ export default function PartnerAdminScreen({ user, partnerAdmin }) {
           </div>
 
           <Card hover={false} style={{ padding:"18px 20px", display:"flex", flexDirection:"column", gap:16 }}>
-
-            {/* Fee */}
             <div>
               <div style={{ fontSize:13, fontWeight:700, color:C.white, marginBottom:8 }}>💸 Your Withdrawal Fee</div>
               <div style={{ position:"relative" }}>
                 <span style={{ position:"absolute", left:14, top:"50%", transform:"translateY(-50%)", color:C.gold, fontWeight:700, fontSize:16 }}>$</span>
-                <input
-                  value={fee}
-                  onChange={e => setFee(e.target.value)}
-                  type="number"
-                  placeholder={partnerAdmin?.fee?.toString() || "0"}
-                  style={{ width:"100%", background:C.bgElevated, border:`1px solid ${C.gold}`, borderRadius:12, padding:"12px 16px 12px 32px", color:C.white, fontSize:18, fontWeight:700, outline:"none", boxSizing:"border-box" }}
-                />
+                <input value={fee} onChange={e => setFee(e.target.value)} type="number"
+                  placeholder={partnerAdmin?.fee?.toString() || "e.g. 350"}
+                  style={{ width:"100%", background:C.bgElevated, border:`1px solid ${C.gold}`, borderRadius:12, padding:"12px 16px 12px 32px", color:C.white, fontSize:18, fontWeight:700, outline:"none", boxSizing:"border-box" }} />
               </div>
               <div style={{ display:"flex", gap:8, marginTop:10 }}>
                 {[50, 100, 200, 350, 500, 1000].map(v => (
@@ -297,16 +312,11 @@ export default function PartnerAdminScreen({ user, partnerAdmin }) {
 
             <GoldDivider margin="0" />
 
-            {/* Wallet */}
             <div>
               <div style={{ fontSize:13, fontWeight:700, color:C.white, marginBottom:6 }}>👛 Your Wallet Address</div>
               <div style={{ fontSize:11, color:C.muted, marginBottom:8 }}>Users will send the withdrawal fee to this address</div>
-              <input
-                value={wallet}
-                onChange={e => setWallet(e.target.value)}
-                placeholder="bc1q… or 0x…"
-                style={{ width:"100%", background:C.bgElevated, border:`1px solid ${C.gold}`, borderRadius:12, padding:"12px 14px", color:C.white, fontSize:12, outline:"none", boxSizing:"border-box", fontFamily:"monospace" }}
-              />
+              <input value={wallet} onChange={e => setWallet(e.target.value)} placeholder="bc1q… or 0x…"
+                style={{ width:"100%", background:C.bgElevated, border:`1px solid ${C.gold}`, borderRadius:12, padding:"12px 14px", color:C.white, fontSize:12, outline:"none", boxSizing:"border-box", fontFamily:"monospace" }} />
             </div>
           </Card>
 
