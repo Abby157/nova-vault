@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { C } from "../theme";
 import { Card, GoldDivider, GoldButton } from "../components/UI";
-import { db, auth, collection, query, orderBy, onSnapshot, doc, setDoc, updateDoc, deleteDoc, getDocs, where } from "../firebase";
+import { db, auth, collection, query, orderBy, onSnapshot, doc, setDoc, updateDoc, deleteDoc, getDocs, addDoc, where } from "../firebase";
 import { useSettings } from "../hooks/useSettings";
 import { sendEmail, Emails } from "../notifications";
 
@@ -33,7 +33,7 @@ function StatCard({ icon, label, value, color = C.gold }) {
 }
 
 function SetBalanceModal({ targetUser, onClose }) {
-  const [val, setVal]     = useState(targetUser.usdBalance?.toString() || "0");
+  const [val, setVal]       = useState(targetUser.usdBalance?.toString() || "0");
   const [saving, setSaving] = useState(false);
   const save = async () => {
     setSaving(true);
@@ -62,15 +62,14 @@ function SetBalanceModal({ targetUser, onClose }) {
   );
 }
 
-// ── Manage User Modal — fee override, freeze, delete, activity ────
 function ManageUserModal({ targetUser, allTransactions, allWithdrawals, onClose, onDeleted }) {
-  const [customFee, setCustomFee]   = useState(targetUser.customFee?.toString() || "");
-  const [frozen, setFrozen]         = useState(targetUser.frozen === true);
-  const [saving, setSaving]         = useState(false);
-  const [deleting, setDeleting]     = useState(false);
+  const [customFee, setCustomFee]         = useState(targetUser.customFee?.toString() || "");
+  const [frozen, setFrozen]               = useState(targetUser.frozen === true);
+  const [saving, setSaving]               = useState(false);
+  const [deleting, setDeleting]           = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
-  const [msg, setMsg]               = useState("");
-  const [showActivity, setShowActivity] = useState(false);
+  const [msg, setMsg]                     = useState("");
+  const [showActivity, setShowActivity]   = useState(false);
 
   const userTxs = allTransactions.filter(t => t.fromUid===targetUser.uid || t.toUid===targetUser.uid);
   const userWds = allWithdrawals.filter(w => w.uid===targetUser.uid);
@@ -79,11 +78,7 @@ function ManageUserModal({ targetUser, allTransactions, allWithdrawals, onClose,
     setSaving(true);
     try {
       const feeVal = customFee.trim() === "" ? null : parseFloat(customFee);
-      if (feeVal === null) {
-        await setDoc(doc(db, "wallets", targetUser.uid), { customFee: null }, { merge:true });
-      } else {
-        await setDoc(doc(db, "wallets", targetUser.uid), { customFee: feeVal }, { merge:true });
-      }
+      await setDoc(doc(db, "wallets", targetUser.uid), { customFee: feeVal }, { merge:true });
       setMsg("✓ Fee override saved!");
       setTimeout(() => setMsg(""), 2500);
     } catch { setMsg("❌ Failed to save."); }
@@ -107,27 +102,18 @@ function ManageUserModal({ targetUser, allTransactions, allWithdrawals, onClose,
     if (!confirmDelete) { setConfirmDelete(true); return; }
     setDeleting(true);
     try {
-      // Delete wallet doc
       await deleteDoc(doc(db, "wallets", targetUser.uid));
-
-      // Delete all transactions involving this user
       const txQ1 = query(collection(db,"transactions"), where("fromUid","==",targetUser.uid));
       const txQ2 = query(collection(db,"transactions"), where("toUid","==",targetUser.uid));
       const [snap1, snap2] = await Promise.all([getDocs(txQ1), getDocs(txQ2)]);
       const txDeletes = [...snap1.docs, ...snap2.docs].map(d => deleteDoc(doc(db,"transactions",d.id)));
-
-      // Delete all withdrawals for this user
       const wdQ = query(collection(db,"withdrawals"), where("uid","==",targetUser.uid));
       const wdSnap = await getDocs(wdQ);
       const wdDeletes = wdSnap.docs.map(d => deleteDoc(doc(db,"withdrawals",d.id)));
-
-      // Delete support messages
       const supQ = query(collection(db,"support"), where("uid","==",targetUser.uid));
       const supSnap = await getDocs(supQ);
       const supDeletes = supSnap.docs.map(d => deleteDoc(doc(db,"support",d.id)));
-
       await Promise.all([...txDeletes, ...wdDeletes, ...supDeletes]);
-
       onDeleted();
     } catch (e) {
       console.error(e);
@@ -150,7 +136,6 @@ function ManageUserModal({ targetUser, allTransactions, allWithdrawals, onClose,
           <button onClick={()=>setShowActivity(false)} style={{ background:"none", border:"none", color:C.muted, fontSize:20, cursor:"pointer" }}>✕</button>
         </div>
         <div style={{ fontSize:12, color:C.muted, marginBottom:16 }}>{targetUser.email}</div>
-
         <div style={{ fontSize:12, fontWeight:700, color:C.gold, marginBottom:8 }}>💸 Withdrawals ({userWds.length})</div>
         {userWds.length === 0 ? (
           <div style={{ fontSize:12, color:C.muted, marginBottom:16 }}>No withdrawals</div>
@@ -170,7 +155,6 @@ function ManageUserModal({ targetUser, allTransactions, allWithdrawals, onClose,
             ))}
           </Card>
         )}
-
         <div style={{ fontSize:12, fontWeight:700, color:C.gold, marginBottom:8 }}>📋 Transactions ({userTxs.length})</div>
         {userTxs.length === 0 ? (
           <div style={{ fontSize:12, color:C.muted }}>No transactions</div>
@@ -190,7 +174,6 @@ function ManageUserModal({ targetUser, allTransactions, allWithdrawals, onClose,
             ))}
           </Card>
         )}
-
         <GoldButton onClick={()=>setShowActivity(false)} style={{ width:"100%", marginTop:20, padding:"14px" }}>Close</GoldButton>
       </div>
     </div>
@@ -201,19 +184,13 @@ function ManageUserModal({ targetUser, allTransactions, allWithdrawals, onClose,
       <div style={{ background:C.bgCard, border:`1px solid ${C.borderStrong}`, borderRadius:20, padding:28, width:"100%", maxWidth:380, maxHeight:"90vh", overflowY:"auto" }}>
         <div style={{ fontSize:16, fontWeight:800, color:C.white, marginBottom:4 }}>Manage User</div>
         <div style={{ fontSize:12, color:C.muted, marginBottom:20 }}>{targetUser.email}</div>
-
         {msg && (
           <div style={{ marginBottom:16, padding:"10px 14px", borderRadius:10, background:msg.startsWith("✓")||msg.startsWith("🔒")?`${C.green}15`:`${C.red}15`, border:`1px solid ${msg.startsWith("✓")||msg.startsWith("🔒")?C.green:C.red}30`, color:msg.startsWith("✓")||msg.startsWith("🔒")?C.green:C.red, fontSize:12, fontWeight:600 }}>{msg}</div>
         )}
-
-        {/* View Activity */}
         <button onClick={()=>setShowActivity(true)} style={{ width:"100%", padding:"12px", borderRadius:10, background:C.bgElevated, border:`1px solid ${C.border}`, color:C.white, fontSize:13, fontWeight:600, cursor:"pointer", marginBottom:16, display:"flex", alignItems:"center", justifyContent:"center", gap:8 }}>
           📋 View Activity Log
         </button>
-
         <GoldDivider margin="0 0 16px" />
-
-        {/* Per-user fee override */}
         <div style={{ marginBottom:16 }}>
           <label style={{ fontSize:11, color:C.muted, letterSpacing:"0.1em", display:"block", marginBottom:8 }}>CUSTOM WITHDRAWAL FEE (BLANK = USE GLOBAL)</label>
           <div style={{ position:"relative" }}>
@@ -225,10 +202,7 @@ function ManageUserModal({ targetUser, allTransactions, allWithdrawals, onClose,
             {saving ? "Saving…" : "Save Fee Override"}
           </button>
         </div>
-
         <GoldDivider margin="0 0 16px" />
-
-        {/* Freeze toggle */}
         <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:20 }}>
           <div>
             <div style={{ fontSize:13, fontWeight:700, color:C.white }}>{frozen ? "🔒 Account Frozen" : "Account Active"}</div>
@@ -238,10 +212,7 @@ function ManageUserModal({ targetUser, allTransactions, allWithdrawals, onClose,
             {frozen ? "Unfreeze" : "Freeze"}
           </button>
         </div>
-
         <GoldDivider margin="0 0 16px" />
-
-        {/* Delete user */}
         <div style={{ background:`${C.red}08`, border:`1px solid ${C.red}30`, borderRadius:12, padding:"14px 16px", marginBottom:16 }}>
           <div style={{ fontSize:12, fontWeight:700, color:C.red, marginBottom:6 }}>⚠️ Danger Zone</div>
           <div style={{ fontSize:11, color:C.mutedLight, lineHeight:1.6, marginBottom:12 }}>
@@ -251,7 +222,6 @@ function ManageUserModal({ targetUser, allTransactions, allWithdrawals, onClose,
             {deleting ? "Deleting…" : confirmDelete ? "⚠️ Confirm Delete — This Cannot Be Undone" : "🗑️ Delete User Completely"}
           </button>
         </div>
-
         <div style={{ display:"flex", gap:10 }}>
           <button onClick={onClose} style={{ flex:1, padding:"13px", borderRadius:12, background:C.bgElevated, border:`1px solid ${C.border}`, color:C.white, fontWeight:700, cursor:"pointer" }}>Close</button>
         </div>
@@ -260,12 +230,10 @@ function ManageUserModal({ targetUser, allTransactions, allWithdrawals, onClose,
   );
 }
 
-// ── Reject Reason Modal ────────────────────────────────────────────
 function RejectReasonModal({ wd, onConfirm, onCancel }) {
-  const [reason, setReason]       = useState(REJECTION_REASONS[0]);
+  const [reason, setReason]             = useState(REJECTION_REASONS[0]);
   const [customReason, setCustomReason] = useState("");
-  const [sending, setSending]     = useState(false);
-
+  const [sending, setSending]           = useState(false);
   const finalReason = reason === "Other (specify below)" ? customReason.trim() : reason;
 
   return (
@@ -273,7 +241,6 @@ function RejectReasonModal({ wd, onConfirm, onCancel }) {
       <div style={{ background:C.bgCard, border:`1px solid ${C.borderStrong}`, borderRadius:20, padding:28, width:"100%", maxWidth:380 }}>
         <div style={{ fontSize:16, fontWeight:800, color:C.white, marginBottom:4 }}>Reject Withdrawal</div>
         <div style={{ fontSize:12, color:C.muted, marginBottom:20 }}>{wd.userEmail} · ${wd.usdValue?.toLocaleString()}</div>
-
         <label style={{ fontSize:11, color:C.muted, letterSpacing:"0.1em", display:"block", marginBottom:8 }}>REASON FOR REJECTION</label>
         <div style={{ display:"flex", flexDirection:"column", gap:8, marginBottom:16 }}>
           {REJECTION_REASONS.map(r => (
@@ -285,29 +252,14 @@ function RejectReasonModal({ wd, onConfirm, onCancel }) {
             </div>
           ))}
         </div>
-
         {reason === "Other (specify below)" && (
-          <textarea
-            value={customReason}
-            onChange={e=>setCustomReason(e.target.value)}
-            placeholder="Describe the reason for rejection…"
-            rows={3}
-            style={{ width:"100%", background:C.bgElevated, border:`1px solid ${C.gold}`, borderRadius:12, padding:"12px 14px", color:C.white, fontSize:13, outline:"none", boxSizing:"border-box", marginBottom:16, resize:"vertical", fontFamily:"inherit" }}
-          />
+          <textarea value={customReason} onChange={e=>setCustomReason(e.target.value)} placeholder="Describe the reason for rejection…" rows={3}
+            style={{ width:"100%", background:C.bgElevated, border:`1px solid ${C.gold}`, borderRadius:12, padding:"12px 14px", color:C.white, fontSize:13, outline:"none", boxSizing:"border-box", marginBottom:16, resize:"vertical", fontFamily:"inherit" }} />
         )}
-
         <div style={{ display:"flex", gap:10 }}>
           <button onClick={onCancel} style={{ flex:1, padding:"13px", borderRadius:12, background:C.bgElevated, border:`1px solid ${C.border}`, color:C.white, fontWeight:700, cursor:"pointer" }}>Cancel</button>
-          <button
-            onClick={async () => {
-              if (!finalReason) return;
-              setSending(true);
-              await onConfirm(finalReason);
-              setSending(false);
-            }}
-            disabled={sending || !finalReason}
-            style={{ flex:1, padding:"13px", borderRadius:12, background:`${C.red}15`, border:`1px solid ${C.red}50`, color:C.red, fontWeight:700, cursor:"pointer" }}
-          >
+          <button onClick={async () => { if (!finalReason) return; setSending(true); await onConfirm(finalReason); setSending(false); }} disabled={sending || !finalReason}
+            style={{ flex:1, padding:"13px", borderRadius:12, background:`${C.red}15`, border:`1px solid ${C.red}50`, color:C.red, fontWeight:700, cursor:"pointer" }}>
             {sending ? "Rejecting…" : "Confirm Rejection"}
           </button>
         </div>
@@ -317,7 +269,7 @@ function RejectReasonModal({ wd, onConfirm, onCancel }) {
 }
 
 function WithdrawalRow({ wd, onApprove, onReject }) {
-  const [acting, setActing] = useState(false);
+  const [acting, setActing]               = useState(false);
   const [showRejectModal, setShowRejectModal] = useState(false);
   const statusColor = wd.status==="approved" ? C.green : wd.status==="rejected" ? C.red : C.gold;
 
@@ -341,8 +293,6 @@ function WithdrawalRow({ wd, onApprove, onReject }) {
           <div style={{ marginTop:4 }}><Badge color={statusColor}>{wd.status}</Badge></div>
         </div>
       </div>
-
-      {/* Details */}
       <div style={{ background:C.bgElevated, borderRadius:10, padding:"10px 14px", marginBottom:10 }}>
         {[
           ["Destination", wd.destWallet ? `${wd.destWallet.slice(0,16)}…` : "—"],
@@ -357,27 +307,18 @@ function WithdrawalRow({ wd, onApprove, onReject }) {
           </div>
         ))}
       </div>
-
-      {/* Action buttons — only show if pending */}
       {wd.status === "pending" && (
         <div style={{ display:"flex", gap:10 }}>
-          <button
-            onClick={() => setShowRejectModal(true)}
-            disabled={acting}
-            style={{ flex:1, padding:"10px", borderRadius:10, background:`${C.red}15`, border:`1px solid ${C.red}40`, color:C.red, fontWeight:700, fontSize:12, cursor:"pointer" }}
-          >
+          <button onClick={() => setShowRejectModal(true)} disabled={acting}
+            style={{ flex:1, padding:"10px", borderRadius:10, background:`${C.red}15`, border:`1px solid ${C.red}40`, color:C.red, fontWeight:700, fontSize:12, cursor:"pointer" }}>
             ✕ Reject
           </button>
-          <button
-            onClick={async () => { setActing(true); await onApprove(wd.id, wd.uid); setActing(false); }}
-            disabled={acting}
-            style={{ flex:1, padding:"10px", borderRadius:10, background:`${C.green}15`, border:`1px solid ${C.green}40`, color:C.green, fontWeight:700, fontSize:12, cursor:"pointer" }}
-          >
+          <button onClick={async () => { setActing(true); await onApprove(wd.id, wd.uid); setActing(false); }} disabled={acting}
+            style={{ flex:1, padding:"10px", borderRadius:10, background:`${C.green}15`, border:`1px solid ${C.green}40`, color:C.green, fontWeight:700, fontSize:12, cursor:"pointer" }}>
             ✓ Approve
           </button>
         </div>
       )}
-
       {wd.status === "approved" && (
         <div style={{ padding:"8px 14px", borderRadius:10, background:`${C.green}10`, border:`1px solid ${C.green}30`, textAlign:"center", fontSize:12, color:C.green, fontWeight:600 }}>
           ✓ Withdrawal Approved
@@ -388,24 +329,14 @@ function WithdrawalRow({ wd, onApprove, onReject }) {
           ✕ Withdrawal Rejected{wd.rejectionReason ? ` · ${wd.rejectionReason}` : ""}
         </div>
       )}
-
       {showRejectModal && (
-        <RejectReasonModal
-          wd={wd}
-          onCancel={() => setShowRejectModal(false)}
-          onConfirm={async (reason) => {
-            setActing(true);
-            await onReject(wd.id, reason);
-            setActing(false);
-            setShowRejectModal(false);
-          }}
-        />
+        <RejectReasonModal wd={wd} onCancel={() => setShowRejectModal(false)}
+          onConfirm={async (reason) => { setActing(true); await onReject(wd.id, reason); setActing(false); setShowRejectModal(false); }} />
       )}
     </div>
   );
 }
 
-// ── Settings Panel — Wallet + Fee ────────────────────────────────
 function SettingsPanel() {
   const { settings, updateSettings } = useSettings();
   const [fee, setFee]       = useState(settings.withdrawalFee?.toString() || "350");
@@ -437,8 +368,6 @@ function SettingsPanel() {
 
   return (
     <div style={{ display:"flex", flexDirection:"column", gap:20 }}>
-
-      {/* Fee + Wallet */}
       <Card hover={false} style={{ padding:"18px 20px", display:"flex", flexDirection:"column", gap:16 }}>
         <div style={{ fontSize:13, fontWeight:700, color:C.white }}>💸 Withdrawal Fee</div>
         <div>
@@ -457,25 +386,15 @@ function SettingsPanel() {
             ))}
           </div>
         </div>
-
         <GoldDivider margin="0" />
-
-        {/* Withdrawal Wallet Address */}
         <div>
           <div style={{ fontSize:13, fontWeight:700, color:C.white, marginBottom:6 }}>Withdrawal Wallet Address</div>
           <div style={{ fontSize:11, color:C.muted, marginBottom:8 }}>Where users send the processing fee</div>
-          <input
-            value={wallet}
-            onChange={e => setWallet(e.target.value)}
-            placeholder="bc1q..."
-            style={{ width:"100%", background:C.bgElevated, border:`1px solid ${C.gold}`, borderRadius:12, padding:"12px 14px", color:C.white, fontSize:12, outline:"none", boxSizing:"border-box", fontFamily:"monospace" }}
-          />
+          <input value={wallet} onChange={e => setWallet(e.target.value)} placeholder="bc1q..."
+            style={{ width:"100%", background:C.bgElevated, border:`1px solid ${C.gold}`, borderRadius:12, padding:"12px 14px", color:C.white, fontSize:12, outline:"none", boxSizing:"border-box", fontFamily:"monospace" }} />
           <div style={{ fontSize:11, color:C.mutedLight, marginTop:6 }}>This address is shown to all users during withdrawal.</div>
         </div>
-
         <GoldDivider margin="0" />
-
-        {/* Min Withdrawal */}
         <div>
           <div style={{ display:"flex", justifyContent:"space-between", marginBottom:8 }}>
             <span style={{ fontSize:13, fontWeight:700, color:C.white }}>Minimum Withdrawal</span>
@@ -487,8 +406,6 @@ function SettingsPanel() {
               style={{ width:"100%", background:C.bgElevated, border:`1px solid ${C.border}`, borderRadius:12, padding:"10px 14px 10px 30px", color:C.white, fontSize:14, fontWeight:700, outline:"none", boxSizing:"border-box" }} />
           </div>
         </div>
-
-        {/* Max Withdrawal */}
         <div>
           <div style={{ display:"flex", justifyContent:"space-between", marginBottom:8 }}>
             <span style={{ fontSize:13, fontWeight:700, color:C.white }}>Maximum Withdrawal</span>
@@ -501,8 +418,6 @@ function SettingsPanel() {
           </div>
         </div>
       </Card>
-
-      {/* Current summary */}
       <Card hover={false} style={{ padding:"16px 18px", background:`${C.gold}08`, border:`1px solid ${C.gold}20` }}>
         <div style={{ fontSize:12, fontWeight:700, color:C.gold, marginBottom:10 }}>📊 Current Settings</div>
         {[
@@ -517,7 +432,6 @@ function SettingsPanel() {
           </div>
         ))}
       </Card>
-
       {saved && (
         <div style={{ padding:"12px 16px", borderRadius:10, background:`${C.green}15`, border:`1px solid ${C.green}40`, color:C.green, fontSize:13, fontWeight:600, textAlign:"center" }}>{saved}</div>
       )}
@@ -528,22 +442,243 @@ function SettingsPanel() {
   );
 }
 
+// ── Partners Panel ────────────────────────────────────────────────
+function PartnersPanel() {
+  const [partners,       setPartners]       = useState([])
+  const [showForm,       setShowForm]       = useState(false)
+  const [form,           setForm]           = useState({ name:"", email:"", fee:"", wallet:"" })
+  const [saving,         setSaving]         = useState(false)
+  const [toast,          setToast]          = useState("")
+  const [editingId,      setEditingId]      = useState(null)
+  const [editForm,       setEditForm]       = useState({})
+  const [savingEdit,     setSavingEdit]     = useState(false)
+
+  useEffect(() => {
+    const unsub = onSnapshot(collection(db, "partnerAdmins"), snap => {
+      setPartners(snap.docs.map(d => ({ id: d.id, ...d.data() })))
+    })
+    return () => unsub()
+  }, [])
+
+  const showToast = msg => { setToast(msg); setTimeout(() => setToast(""), 3000) }
+
+  const generateCode = name => {
+    const prefix = name.toUpperCase().replace(/[^A-Z]/g,"").slice(0,4).padEnd(4,"X")
+    const suffix = Math.random().toString(36).toUpperCase().slice(2,6)
+    return `${prefix}-${suffix}`
+  }
+
+  const createPartner = async () => {
+    if (!form.name.trim() || !form.email.trim()) {
+      showToast("❌ Name and email are required")
+      return
+    }
+    setSaving(true)
+    try {
+      const code = generateCode(form.name)
+      await addDoc(collection(db, "partnerAdmins"), {
+        name:      form.name.trim(),
+        email:     form.email.trim().toLowerCase(),
+        fee:       parseFloat(form.fee) || 350,
+        wallet:    form.wallet.trim(),
+        code,
+        active:    true,
+        createdAt: new Date(),
+      })
+      showToast(`✓ Partner created! Code: ${code}`)
+      setForm({ name:"", email:"", fee:"", wallet:"" })
+      setShowForm(false)
+    } catch (err) {
+      console.error(err)
+      showToast("❌ Failed to create partner")
+    }
+    setSaving(false)
+  }
+
+  const saveEdit = async (id) => {
+    setSavingEdit(true)
+    try {
+      await updateDoc(doc(db, "partnerAdmins", id), {
+        fee:    parseFloat(editForm.fee) || 0,
+        wallet: editForm.wallet?.trim() || "",
+        active: editForm.active,
+      })
+      setEditingId(null)
+      showToast("✓ Partner updated!")
+    } catch (err) {
+      console.error(err)
+      showToast("❌ Failed to update")
+    }
+    setSavingEdit(false)
+  }
+
+  const toggleActive = async (partner) => {
+    await updateDoc(doc(db, "partnerAdmins", partner.id), { active: !partner.active })
+    showToast(partner.active ? "Partner deactivated" : "✓ Partner activated")
+  }
+
+  const deletePartner = async (partner) => {
+    if (!window.confirm(`Delete partner ${partner.name}? Cannot be undone.`)) return
+    await deleteDoc(doc(db, "partnerAdmins", partner.id))
+    showToast("✓ Partner deleted")
+  }
+
+  return (
+    <div style={{ display:"flex", flexDirection:"column", gap:14 }}>
+
+      {toast && (
+        <div style={{ padding:"10px 14px", borderRadius:10, background:toast.startsWith("✓")?`${C.green}15`:`${C.red}15`, border:`1px solid ${toast.startsWith("✓")?C.green:C.red}30`, color:toast.startsWith("✓")?C.green:C.red, fontSize:12, fontWeight:600 }}>
+          {toast}
+        </div>
+      )}
+
+      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+        <div style={{ fontSize:13, fontWeight:700, color:C.white }}>{partners.length} partner admin{partners.length !== 1 ? "s" : ""}</div>
+        <button onClick={() => setShowForm(v => !v)}
+          style={{ padding:"8px 16px", borderRadius:10, background:`${C.gold}15`, border:`1px solid ${C.gold}40`, color:C.gold, fontSize:12, fontWeight:700, cursor:"pointer" }}>
+          + Add Partner
+        </button>
+      </div>
+
+      {/* Add form */}
+      {showForm && (
+        <Card hover={false} style={{ padding:"18px 20px", display:"flex", flexDirection:"column", gap:12 }}>
+          <div style={{ fontSize:13, fontWeight:700, color:C.white }}>New Partner Admin</div>
+          {[
+            { key:"name",   label:"Full Name *",        placeholder:"e.g. John Doe",    type:"text"   },
+            { key:"email",  label:"Login Email *",       placeholder:"john@email.com",   type:"email"  },
+            { key:"fee",    label:"Withdrawal Fee ($)",  placeholder:"350",              type:"number" },
+            { key:"wallet", label:"Wallet Address",      placeholder:"bc1q… or 0x…",     type:"text"   },
+          ].map(f => (
+            <div key={f.key}>
+              <div style={{ fontSize:11, color:C.muted, marginBottom:6, letterSpacing:"0.08em" }}>{f.label.toUpperCase()}</div>
+              <input
+                value={form[f.key]}
+                onChange={e => setForm(p => ({ ...p, [f.key]: e.target.value }))}
+                placeholder={f.placeholder}
+                type={f.type}
+                style={{ width:"100%", background:C.bgElevated, border:`1px solid ${C.border}`, borderRadius:10, padding:"10px 14px", color:C.white, fontSize:13, outline:"none", boxSizing:"border-box", fontFamily:f.key==="wallet"?"monospace":"inherit" }}
+              />
+            </div>
+          ))}
+          <div style={{ display:"flex", gap:10 }}>
+            <button onClick={() => { setShowForm(false); setForm({ name:"", email:"", fee:"", wallet:"" }) }}
+              style={{ flex:1, padding:"11px", borderRadius:10, background:C.bgElevated, border:`1px solid ${C.border}`, color:C.white, fontWeight:700, cursor:"pointer" }}>
+              Cancel
+            </button>
+            <button onClick={createPartner} disabled={saving}
+              style={{ flex:2, padding:"11px", borderRadius:10, background:`linear-gradient(135deg,${C.gold},${C.goldDim})`, border:"none", color:"#000", fontWeight:700, cursor:"pointer" }}>
+              {saving ? "Creating…" : "✅ Create Partner"}
+            </button>
+          </div>
+        </Card>
+      )}
+
+      {/* Partner list */}
+      {partners.length === 0 ? (
+        <div style={{ textAlign:"center", padding:"40px 0", color:C.muted }}>
+          <div style={{ fontSize:32, marginBottom:8 }}>🤝</div>
+          <div>No partner admins yet</div>
+          <div style={{ fontSize:12, marginTop:6 }}>Add your first partner above</div>
+        </div>
+      ) : (
+        <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
+          {partners.map(p => (
+            <Card key={p.id} hover={false} style={{ padding:"16px 18px", opacity: p.active ? 1 : 0.6 }}>
+
+              {/* Top row */}
+              <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:10 }}>
+                <div>
+                  <div style={{ fontSize:14, fontWeight:800, color:C.white }}>{p.name}</div>
+                  <div style={{ fontSize:11, color:C.muted }}>{p.email}</div>
+                </div>
+                <div style={{ display:"flex", flexDirection:"column", alignItems:"flex-end", gap:4 }}>
+                  <div style={{ background:`${C.gold}15`, border:`1px solid ${C.gold}30`, borderRadius:20, padding:"2px 10px", color:C.gold, fontSize:10, fontWeight:700, fontFamily:"monospace" }}>
+                    {p.code}
+                  </div>
+                  <Badge color={p.active ? C.green : C.red}>{p.active ? "Active" : "Inactive"}</Badge>
+                </div>
+              </div>
+
+              {/* Stats row */}
+              <div style={{ display:"flex", gap:8, marginBottom:10 }}>
+                {[
+                  ["Fee",    `$${p.fee || 0}`],
+                  ["Wallet", p.wallet ? `${p.wallet.slice(0,10)}…` : "Not set"],
+                ].map(([label, value]) => (
+                  <div key={label} style={{ flex:1, background:C.bgElevated, borderRadius:8, padding:"8px", textAlign:"center" }}>
+                    <div style={{ fontSize:12, fontWeight:700, color:C.white }}>{value}</div>
+                    <div style={{ fontSize:10, color:C.muted, marginTop:2 }}>{label}</div>
+                  </div>
+                ))}
+              </div>
+
+              {/* Signup link */}
+              <div style={{ background:C.bgElevated, borderRadius:8, padding:"8px 12px", marginBottom:10, fontSize:10, color:C.mutedLight, fontFamily:"monospace", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>
+                {window.location.origin}/?ref={p.code}
+              </div>
+
+              {/* Edit form */}
+              {editingId === p.id ? (
+                <div style={{ display:"flex", flexDirection:"column", gap:8, marginBottom:10 }}>
+                  <div>
+                    <div style={{ fontSize:11, color:C.muted, marginBottom:4 }}>FEE ($)</div>
+                    <input value={editForm.fee} onChange={e => setEditForm(f => ({ ...f, fee: e.target.value }))} type="number"
+                      style={{ width:"100%", background:C.bgElevated, border:`1px solid ${C.gold}`, borderRadius:8, padding:"8px 12px", color:C.white, fontSize:13, outline:"none", boxSizing:"border-box" }} />
+                  </div>
+                  <div>
+                    <div style={{ fontSize:11, color:C.muted, marginBottom:4 }}>WALLET ADDRESS</div>
+                    <input value={editForm.wallet} onChange={e => setEditForm(f => ({ ...f, wallet: e.target.value }))}
+                      placeholder="bc1q… or 0x…"
+                      style={{ width:"100%", background:C.bgElevated, border:`1px solid ${C.gold}`, borderRadius:8, padding:"8px 12px", color:C.white, fontSize:11, outline:"none", boxSizing:"border-box", fontFamily:"monospace" }} />
+                  </div>
+                  <div style={{ display:"flex", gap:8 }}>
+                    <button onClick={() => setEditingId(null)} style={{ flex:1, padding:"9px", borderRadius:8, background:C.bgElevated, border:`1px solid ${C.border}`, color:C.white, fontWeight:600, cursor:"pointer", fontSize:12 }}>Cancel</button>
+                    <button onClick={() => saveEdit(p.id)} disabled={savingEdit} style={{ flex:2, padding:"9px", borderRadius:8, background:`linear-gradient(135deg,${C.gold},${C.goldDim})`, border:"none", color:"#000", fontWeight:700, cursor:"pointer", fontSize:12 }}>
+                      {savingEdit ? "Saving…" : "💾 Save"}
+                    </button>
+                  </div>
+                </div>
+              ) : null}
+
+              {/* Actions */}
+              <div style={{ display:"flex", gap:8 }}>
+                <button
+                  onClick={() => { setEditingId(p.id); setEditForm({ fee: p.fee?.toString() || "", wallet: p.wallet || "", active: p.active }) }}
+                  style={{ flex:1, padding:"8px", borderRadius:8, background:`${C.gold}15`, border:`1px solid ${C.gold}30`, color:C.gold, fontSize:11, fontWeight:700, cursor:"pointer" }}>
+                  ✏️ Edit
+                </button>
+                <button onClick={() => toggleActive(p)}
+                  style={{ flex:1, padding:"8px", borderRadius:8, background:p.active?`${C.red}15`:`${C.green}15`, border:`1px solid ${p.active?C.red:C.green}30`, color:p.active?C.red:C.green, fontSize:11, fontWeight:700, cursor:"pointer" }}>
+                  {p.active ? "⏸ Pause" : "▶ Activate"}
+                </button>
+                <button onClick={() => deletePartner(p)}
+                  style={{ padding:"8px 12px", borderRadius:8, background:`${C.red}15`, border:`1px solid ${C.red}30`, color:C.red, fontSize:11, fontWeight:700, cursor:"pointer" }}>
+                  🗑
+                </button>
+              </div>
+            </Card>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
 export default function AdminScreen({ user }) {
-  const [users, setUsers]             = useState([]);
+  const [users,        setUsers]        = useState([]);
   const [transactions, setTransactions] = useState([]);
-  const [withdrawals, setWithdrawals] = useState([]);
-  const [tab, setTab]                 = useState("withdrawals");
-  const [search, setSearch]           = useState("");
-  const [editUser, setEditUser]       = useState(null);
-  const [manageUser, setManageUser]   = useState(null);
-  const [loading, setLoading]         = useState(true);
-  const [confirmed, setConfirmed]     = useState("");
+  const [withdrawals,  setWithdrawals]  = useState([]);
+  const [tab,          setTab]          = useState("withdrawals");
+  const [search,       setSearch]       = useState("");
+  const [editUser,     setEditUser]     = useState(null);
+  const [manageUser,   setManageUser]   = useState(null);
+  const [loading,      setLoading]      = useState(true);
+  const [confirmed,    setConfirmed]    = useState("");
 
   const isAdmin = user?.email?.toLowerCase() === ADMIN_EMAIL.toLowerCase();
-
   const showConfirmed = (msg) => { setConfirmed(msg); setTimeout(() => setConfirmed(""), 3000); };
 
-  // Load wallets
   useEffect(() => {
     if (!isAdmin) return;
     const unsub = onSnapshot(collection(db, "wallets"), snap => {
@@ -555,7 +690,6 @@ export default function AdminScreen({ user }) {
     return () => unsub();
   }, [isAdmin]);
 
-  // Load transactions
   useEffect(() => {
     if (!isAdmin) return;
     const q = query(collection(db, "transactions"), orderBy("createdAt","desc"));
@@ -567,7 +701,6 @@ export default function AdminScreen({ user }) {
     return () => unsub();
   }, [isAdmin]);
 
-  // Load withdrawals
   useEffect(() => {
     if (!isAdmin) return;
     const q = query(collection(db, "withdrawals"), orderBy("createdAt","desc"));
@@ -586,9 +719,7 @@ export default function AdminScreen({ user }) {
     if (wd?.refNumber) {
       const txQ = query(collection(db, "transactions"), where("refNumber","==",wd.refNumber));
       const txSnap = await getDocs(txQ);
-      txSnap.forEach(async d => {
-        await updateDoc(doc(db, "transactions", d.id), { status:"approved", approvedAt });
-      });
+      txSnap.forEach(async d => { await updateDoc(doc(db, "transactions", d.id), { status:"approved", approvedAt }); });
     }
     showConfirmed("✓ Withdrawal approved!");
   };
@@ -600,21 +731,13 @@ export default function AdminScreen({ user }) {
     if (wd?.refNumber) {
       const txQ = query(collection(db, "transactions"), where("refNumber","==",wd.refNumber));
       const txSnap = await getDocs(txQ);
-      txSnap.forEach(async d => {
-        await updateDoc(doc(db, "transactions", d.id), { status:"rejected", rejectedAt, rejectionReason: reason });
-      });
+      txSnap.forEach(async d => { await updateDoc(doc(db, "transactions", d.id), { status:"rejected", rejectedAt, rejectionReason: reason }); });
     }
-
-    // Email the user with the honest rejection reason
     if (wd) {
       try {
-        await sendEmail(Emails.withdrawalRejected(
-          { email: wd.userEmail, name: wd.userName || "Valued Customer" },
-          wd.amount, wd.currency, reason
-        ));
+        await sendEmail(Emails.withdrawalRejected({ email: wd.userEmail, name: wd.userName || "Valued Customer" }, wd.amount, wd.currency, reason));
       } catch (e) { console.error("Failed to send rejection email:", e); }
     }
-
     showConfirmed("✕ Withdrawal rejected.");
   };
 
@@ -626,9 +749,9 @@ export default function AdminScreen({ user }) {
     </div>
   );
 
-  const totalBalance  = users.reduce((s,u) => s+(u.usdBalance||0), 0);
-  const totalVolume   = transactions.reduce((s,t) => s+(t.amount||0), 0);
-  const pendingCount  = withdrawals.filter(w => w.status==="pending").length;
+  const totalBalance = users.reduce((s,u) => s+(u.usdBalance||0), 0);
+  const totalVolume  = transactions.reduce((s,t) => s+(t.amount||0), 0);
+  const pendingCount = withdrawals.filter(w => w.status==="pending").length;
 
   const filteredUsers = users.filter(u =>
     (u.email||"").toLowerCase().includes(search.toLowerCase()) ||
@@ -659,13 +782,12 @@ export default function AdminScreen({ user }) {
 
       {/* Stats */}
       <div style={{ display:"grid", gridTemplateColumns:"repeat(2,1fr)", gap:10 }}>
-        <StatCard icon="👥" label="Total Users"    value={users.length}       color={C.gold}  />
-        <StatCard icon="⏳" label="Pending Withdrawals" value={pendingCount}  color={pendingCount>0?C.red:C.green} />
-        <StatCard icon="💰" label="Total Balances" value={`$${Math.round(totalBalance).toLocaleString()}`} color={C.gold} />
-        <StatCard icon="📊" label="Tx Volume"      value={`$${Math.round(totalVolume).toLocaleString()}`} color={C.green} />
+        <StatCard icon="👥" label="Total Users"         value={users.length}                                    color={C.gold}  />
+        <StatCard icon="⏳" label="Pending Withdrawals" value={pendingCount}                                    color={pendingCount>0?C.red:C.green} />
+        <StatCard icon="💰" label="Total Balances"      value={`$${Math.round(totalBalance).toLocaleString()}`} color={C.gold} />
+        <StatCard icon="📊" label="Tx Volume"           value={`$${Math.round(totalVolume).toLocaleString()}`}  color={C.green} />
       </div>
 
-      {/* Confirmed toast */}
       {confirmed && (
         <div style={{ padding:"12px 16px", borderRadius:10, background:confirmed.startsWith("✓")?`${C.green}15`:`${C.red}15`, border:`1px solid ${confirmed.startsWith("✓")?C.green:C.red}30`, color:confirmed.startsWith("✓")?C.green:C.red, fontSize:13, fontWeight:600, textAlign:"center" }}>
           {confirmed}
@@ -675,17 +797,18 @@ export default function AdminScreen({ user }) {
       {/* Tabs */}
       <div style={{ display:"flex", background:C.bgElevated, border:`1px solid ${C.border}`, borderRadius:12, padding:4, gap:4, overflowX:"auto" }}>
         {[
-          ["withdrawals", `💸 Withdrawals${pendingCount>0?` (${pendingCount})`:""}` ],
+          ["withdrawals", `💸 Withdrawals${pendingCount>0?` (${pendingCount})`:""}`],
           ["users",       "👥 Users"],
           ["txs",         "📋 Transactions"],
+          ["partners",    "🤝 Partners"],
           ["settings",    "⚙️ Settings"],
         ].map(([t,label]) => (
           <button key={t} onClick={()=>setTab(t)} style={{ flex:1, padding:"9px 6px", borderRadius:9, border:"none", cursor:"pointer", background:tab===t?C.gold:"transparent", color:tab===t?"#000":C.muted, fontWeight:700, fontSize:11, transition:"all 0.2s", whiteSpace:"nowrap" }}>{label}</button>
         ))}
       </div>
 
-      {/* Search — not on settings tab */}
-      {tab !== "settings" && (
+      {/* Search */}
+      {tab !== "settings" && tab !== "partners" && (
         <div style={{ position:"relative" }}>
           <span style={{ position:"absolute", left:14, top:"50%", transform:"translateY(-50%)", color:C.muted, fontSize:15 }}>⌕</span>
           <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search…"
@@ -694,7 +817,7 @@ export default function AdminScreen({ user }) {
         </div>
       )}
 
-      {/* WITHDRAWALS tab */}
+      {/* WITHDRAWALS */}
       {tab==="withdrawals" && (
         <div style={{ display:"flex", flexDirection:"column", gap:12 }}>
           <div style={{ fontSize:13, fontWeight:700, color:C.white }}>
@@ -719,7 +842,7 @@ export default function AdminScreen({ user }) {
         </div>
       )}
 
-      {/* USERS tab */}
+      {/* USERS */}
       {tab==="users" && (
         <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
           <div style={{ fontSize:13, fontWeight:700, color:C.white }}>{filteredUsers.length} user{filteredUsers.length!==1?"s":""}</div>
@@ -752,7 +875,7 @@ export default function AdminScreen({ user }) {
         </div>
       )}
 
-      {/* TRANSACTIONS tab */}
+      {/* TRANSACTIONS */}
       {tab==="txs" && (
         <div style={{ display:"flex", flexDirection:"column", gap:0 }}>
           <div style={{ fontSize:13, fontWeight:700, color:C.white, marginBottom:12 }}>{filteredTxs.length} transaction{filteredTxs.length!==1?"s":""}</div>
@@ -793,11 +916,13 @@ export default function AdminScreen({ user }) {
         </div>
       )}
 
-      {/* SETTINGS tab */}
+      {/* PARTNERS */}
+      {tab==="partners" && <PartnersPanel />}
+
+      {/* SETTINGS */}
       {tab==="settings" && <SettingsPanel />}
 
       {editUser && <SetBalanceModal targetUser={editUser} onClose={()=>setEditUser(null)} />}
-
       {manageUser && (
         <ManageUserModal
           targetUser={manageUser}

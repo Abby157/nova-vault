@@ -4,17 +4,19 @@ import { fetchLivePrices, CRYPTO_DATA as FALLBACK } from "./data";
 import { ToastContainer } from "./screens/AlertsScreen";
 import { sendEmail, Emails } from "./notifications";
 import { auth, onAuthStateChanged, signOut } from "./firebase";
-import LoginScreen       from "./screens/LoginScreen";
-import Dashboard         from "./screens/Dashboard";
-import SendReceive       from "./screens/SendReceive";
-import TradeScreen       from "./screens/TradeScreen";
-import CardsScreen       from "./screens/CardsScreen";
-import PortfolioScreen   from "./screens/PortfolioScreen";
-import TransactionScreen from "./screens/TransactionScreen";
-import AlertsScreen      from "./screens/AlertsScreen";
-import SettingsScreen    from "./screens/SettingsScreen";
-import AdminScreen       from "./screens/AdminScreen";
-import SupportScreen     from "./screens/SupportScreen";
+import { db, collection, query, where, getDocs } from "./firebase";
+import LoginScreen        from "./screens/LoginScreen";
+import Dashboard          from "./screens/Dashboard";
+import SendReceive        from "./screens/SendReceive";
+import TradeScreen        from "./screens/TradeScreen";
+import CardsScreen        from "./screens/CardsScreen";
+import PortfolioScreen    from "./screens/PortfolioScreen";
+import TransactionScreen  from "./screens/TransactionScreen";
+import AlertsScreen       from "./screens/AlertsScreen";
+import SettingsScreen     from "./screens/SettingsScreen";
+import AdminScreen        from "./screens/AdminScreen";
+import SupportScreen      from "./screens/SupportScreen";
+import PartnerAdminScreen from "./screens/PartnerAdminScreen";
 
 const ADMIN_EMAIL = "davehack966@gmail.com";
 
@@ -37,7 +39,6 @@ function NavItem({ icon, label, active, onClick, badge }) {
   );
 }
 
-// Screens that show a back arrow and title
 const SCREEN_TITLES = {
   send:"Transfer", trade:"Trade", cards:"My Cards",
   portfolio:"Portfolio", history:"History",
@@ -46,33 +47,59 @@ const SCREEN_TITLES = {
 };
 
 export default function App() {
-  const [loggedIn, setLoggedIn]       = useState(false);
-  const [authChecked, setAuthChecked] = useState(false);
-  const [user, setUser]               = useState(null);
-  const [tab, setTab]                 = useState("dashboard");
-  const [prevTab, setPrevTab]         = useState("dashboard");
-  const [mounted, setMounted]         = useState(false);
-  const [cryptos, setCryptos]         = useState(FALLBACK);
-  const [priceStatus, setPriceStatus] = useState("loading");
-  const [toasts, setToasts]           = useState([]);
+  const [loggedIn,      setLoggedIn]      = useState(false);
+  const [authChecked,   setAuthChecked]   = useState(false);
+  const [user,          setUser]          = useState(null);
+  const [tab,           setTab]           = useState("dashboard");
+  const [prevTab,       setPrevTab]       = useState("dashboard");
+  const [mounted,       setMounted]       = useState(false);
+  const [cryptos,       setCryptos]       = useState(FALLBACK);
+  const [priceStatus,   setPriceStatus]   = useState("loading");
+  const [toasts,        setToasts]        = useState([]);
+  const [partnerAdmin,  setPartnerAdmin]  = useState(null);
+  const [partnerLoading,setPartnerLoading]= useState(false);
 
-  // Restore session automatically from Firebase Auth on refresh
+  // Auth listener
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, (firebaseUser) => {
       if (firebaseUser) {
         setUser({
-          name: firebaseUser.displayName || "",
+          name:  firebaseUser.displayName || "",
           email: firebaseUser.email || "",
         });
         setLoggedIn(true);
       } else {
         setUser(null);
         setLoggedIn(false);
+        setPartnerAdmin(null);
       }
       setAuthChecked(true);
     });
     return () => unsub();
   }, []);
+
+  // Check if logged in user is a partner admin
+  useEffect(() => {
+    if (!user?.email) { setPartnerAdmin(null); return; }
+    const email = user.email.toLowerCase();
+    if (email === ADMIN_EMAIL.toLowerCase()) { setPartnerAdmin(null); return; }
+
+    setPartnerLoading(true);
+    getDocs(
+      query(
+        collection(db, "partnerAdmins"),
+        where("email",  "==", email),
+        where("active", "==", true)
+      )
+    ).then(snap => {
+      if (!snap.empty) {
+        setPartnerAdmin({ id: snap.docs[0].id, ...snap.docs[0].data() })
+      } else {
+        setPartnerAdmin(null)
+      }
+      setPartnerLoading(false)
+    }).catch(() => setPartnerLoading(false))
+  }, [user?.email])
 
   useEffect(() => { setTimeout(() => setMounted(true), 50); }, []);
 
@@ -93,23 +120,14 @@ export default function App() {
   };
 
   const handleLogout = async () => {
-    try {
-      await signOut(auth);
-    } catch (e) {
-      console.error("Sign out error:", e);
-    }
-    setTab("dashboard"); setPriceStatus("loading");
+    try { await signOut(auth); } catch (e) { console.error("Sign out error:", e); }
+    setTab("dashboard");
+    setPriceStatus("loading");
+    setPartnerAdmin(null);
   };
 
-  const goTo = (newTab) => {
-    setPrevTab(tab);
-    setTab(newTab);
-  };
-
-  const goBack = () => {
-    setTab(prevTab);
-  };
-
+  const goTo  = (newTab) => { setPrevTab(tab); setTab(newTab); };
+  const goBack = () => { setTab(prevTab); };
   const dismissToast = (id) => setToasts(p => p.filter(t => t.id !== id));
 
   if (!authChecked) return (
@@ -120,9 +138,10 @@ export default function App() {
 
   if (!loggedIn) return <LoginScreen onLogin={handleLogin} />;
 
-  const isAdmin  = user?.email?.toLowerCase() === ADMIN_EMAIL.toLowerCase();
-  const title    = SCREEN_TITLES[tab] || null;
-  const initials = user?.name
+  const isAdmin        = user?.email?.toLowerCase() === ADMIN_EMAIL.toLowerCase();
+  const isPartnerAdmin = !!partnerAdmin && !isAdmin;
+  const title          = SCREEN_TITLES[tab] || null;
+  const initials       = user?.name
     ? user.name.split(" ").map(n => n[0]).join("").toUpperCase().slice(0,2)
     : (user?.email?.[0]||"U").toUpperCase();
 
@@ -132,7 +151,7 @@ export default function App() {
     { id:"trade",     icon:"◈", label:"Trade"    },
     { id:"alerts",    icon:"🔔", label:"Alerts"   },
     { id:"support",   icon:"💬", label:"Support"  },
-    ...(isAdmin
+    ...(isAdmin || isPartnerAdmin
       ? [{ id:"admin", icon:"⚙️", label:"Admin" }]
       : [{ id:"cards", icon:"▣", label:"Cards"  }]
     ),
@@ -147,9 +166,20 @@ export default function App() {
     history:   <TransactionScreen />,
     alerts:    <AlertsScreen cryptos={cryptos} toasts={toasts} setToasts={setToasts} user={user} />,
     settings:  <SettingsScreen onLogout={handleLogout} user={user} />,
-    admin:     <AdminScreen user={user} />,
     support:   <SupportScreen user={user} setTab={goTo} />,
+    admin: isAdmin
+      ? <AdminScreen user={user} />
+      : isPartnerAdmin
+        ? <PartnerAdminScreen user={user} partnerAdmin={partnerAdmin} />
+        : <AdminScreen user={user} />,
   };
+
+  // Show loading while checking partner admin status
+  if (partnerLoading) return (
+    <div style={{ minHeight:"100dvh", display:"flex", alignItems:"center", justifyContent:"center", background:"#080808" }}>
+      <div style={{ color:"#C9A84C", fontSize:14, letterSpacing:"0.1em" }}>Loading…</div>
+    </div>
+  );
 
   return (
     <div style={{
@@ -180,24 +210,14 @@ export default function App() {
               <div style={{ display:"flex", alignItems:"center", gap:10 }}>
                 <button
                   onClick={() => {
-                    if (tab === "support" && window.supportChatOpen) {
-                      window.supportCloseChat();
-                      return;
-                    }
+                    if (tab === "support" && window.supportChatOpen) { window.supportCloseChat(); return; }
                     if (tab === "send" && window.withdrawFlowActive && window.withdrawFlowBack) {
                       const handled = window.withdrawFlowBack();
                       if (handled) return;
                     }
                     goBack();
                   }}
-                  style={{
-                    background:"none",
-                    border:"none",
-                    color:C.gold,
-                    fontSize:18,
-                    cursor:"pointer",
-                    padding:0,
-                  }}
+                  style={{ background:"none", border:"none", color:C.gold, fontSize:18, cursor:"pointer", padding:0 }}
                 >
                   ←
                 </button>
@@ -214,6 +234,12 @@ export default function App() {
             )}
           </div>
           <div style={{ display:"flex", alignItems:"center", gap:8, flexShrink:0 }}>
+            {/* Partner admin badge */}
+            {isPartnerAdmin && (
+              <div style={{ display:"flex", alignItems:"center", gap:5, background:`${C.gold}15`, border:`1px solid ${C.gold}30`, borderRadius:20, padding:"4px 10px" }}>
+                <span style={{ fontSize:9, color:C.gold, letterSpacing:"0.08em", fontWeight:700 }}>🤝 PARTNER</span>
+              </div>
+            )}
             <div style={{ display:"flex", alignItems:"center", gap:5, background:C.bgElevated, border:`1px solid ${C.border}`, borderRadius:20, padding:"4px 8px" }}>
               <div style={{ width:6, height:6, borderRadius:"50%", background:priceStatus==="live"?C.green:priceStatus==="error"?C.red:C.gold, boxShadow:`0 0 6px ${priceStatus==="live"?C.green:priceStatus==="error"?C.red:C.gold}` }} />
               <span style={{ fontSize:9, color:C.muted, letterSpacing:"0.08em" }}>{priceStatus==="live"?"LIVE":priceStatus==="error"?"OFFLINE":"LOADING"}</span>
