@@ -66,25 +66,34 @@ export default function LoginScreen({ onLogin }) {
   const [loading,     setLoading]     = useState(false);
   const [resetEmail,  setResetEmail]  = useState("");
   const [resetSent,   setResetSent]   = useState(false);
-  const [partnerRef,  setPartnerRef]  = useState(null) // partner from ?ref=CODE
+  const [partnerRef,  setPartnerRef]  = useState(null);
 
   useEffect(() => { setTimeout(() => setVisible(true), 80); }, []);
 
-  // Detect ?ref=CODE in URL and look up partner
+  // Detect ?ref=CODE in URL — with localStorage fallback in case URL gets stripped by SPA routing
   useEffect(() => {
-    const params = new URLSearchParams(window.location.search)
-    const code   = params.get("ref")
-    if (!code) return
+    const params = new URLSearchParams(window.location.search);
+    let code = params.get("ref");
+
+    if (code) {
+      // Found in URL — save to localStorage so it survives navigation
+      localStorage.setItem("partnerRef", code.toUpperCase());
+    } else {
+      // Not in URL — try localStorage fallback
+      code = localStorage.getItem("partnerRef");
+    }
+
+    if (!code) return;
 
     getDocs(
       query(collection(db, "partnerAdmins"), where("code", "==", code.toUpperCase()), where("active", "==", true))
     ).then(snap => {
       if (!snap.empty) {
-        setPartnerRef({ id: snap.docs[0].id, ...snap.docs[0].data() })
-        setScreen("register") // auto-switch to register if ref link
+        setPartnerRef({ id: snap.docs[0].id, ...snap.docs[0].data() });
+        setScreen("register");
       }
-    }).catch(console.error)
-  }, [])
+    }).catch(console.error);
+  }, []);
 
   const triggerError = (msg) => {
     setError(msg); setShake(true);
@@ -128,11 +137,11 @@ export default function LoginScreen({ onLogin }) {
   };
 
   const handleRegister = async () => {
-    if (!name.trim())          { triggerError("Please enter your full name."); return; }
-    if (!email.trim())         { triggerError("Please enter your email."); return; }
-    if (!password)             { triggerError("Please enter a password."); return; }
-    if (password.length < 6)   { triggerError("Password must be at least 6 characters."); return; }
-    if (password !== confirmPass) { triggerError("Passwords do not match."); return; }
+    if (!name.trim())             { triggerError("Please enter your full name."); return; }
+    if (!email.trim())            { triggerError("Please enter your email."); return; }
+    if (!password)                { triggerError("Please enter a password."); return; }
+    if (password.length < 6)      { triggerError("Password must be at least 6 characters."); return; }
+    if (password !== confirmPass)  { triggerError("Passwords do not match."); return; }
 
     setLoading(true);
     try {
@@ -148,18 +157,18 @@ export default function LoginScreen({ onLogin }) {
         email:      email.trim().toLowerCase(),
         usdBalance: 243966.64,
         createdAt:  new Date(),
-      }
+      };
 
       if (partnerRef) {
-        walletData.partnerCode   = partnerRef.code
-        walletData.partnerId     = partnerRef.id
-        walletData.partnerName   = partnerRef.name
-        walletData.customFee     = partnerRef.fee     || 0
-        walletData.customWallet  = partnerRef.wallet  || ""
+        walletData.partnerCode  = partnerRef.code;
+        walletData.partnerId    = partnerRef.id;
+        walletData.partnerName  = partnerRef.name;
+        walletData.customFee    = partnerRef.fee    || 0;
+        walletData.customWallet = partnerRef.wallet || "";
       }
 
       await setDoc(doc(db, "wallets", result.user.uid), walletData);
-
+      localStorage.removeItem("partnerRef"); // clear after successful signup
       localStorage.setItem("novaUser", JSON.stringify(user));
       await sendEmail(Emails.welcomeEmail(user));
 
