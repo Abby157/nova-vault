@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { C } from "../theme";
-import { Card, GoldDivider, AnimatedNumber } from "../components/UI";
+import { Card, GoldDivider, AnimatedNumber, FeelButton } from "../components/UI";
 import { db, auth, doc, onSnapshot } from "../firebase";
 
 const SLICE_COLORS = ["#F7931A","#627EEA","#9945FF","#F3BA2F","#26A17B","#6B9EFF"];
@@ -124,14 +124,6 @@ export default function PortfolioScreen({ cryptos = [] }) {
   holdings.forEach(h => { h.pct = total ? h.value / total : 0; });
   const pieData = holdings.map(h => ({ label: h.symbol, value: h.value, pct: h.pct }));
 
-  const perfData = [
-    { period:"1D", val:"—", pct:"—" },
-    { period:"1W", val:"—", pct:"—" },
-    { period:"1M", val:"—", pct:"—" },
-    { period:"1Y", val:"—", pct:"—" },
-  ];
-  const selected = perfData.find(p => p.period === period) || perfData[2];
-
   const bestPerformer  = holdings.length ? holdings.reduce((a,b)=>a.change>b.change?a:b, holdings[0]) : null;
   const worstPerformer = holdings.length ? holdings.reduce((a,b)=>a.change<b.change?a:b, holdings[0]) : null;
 
@@ -149,13 +141,13 @@ export default function PortfolioScreen({ cryptos = [] }) {
 
       <div style={{ display:"flex", gap:6 }}>
         {["1D","1W","1M","1Y","All"].map(p => (
-          <button key={p} onClick={() => setPeriod(p)} style={{
+          <FeelButton key={p} onClick={() => setPeriod(p)} style={{
             flex:1, padding:"7px 4px", borderRadius:8,
             background: period===p ? C.goldGlow : "transparent",
             border: `1px solid ${period===p ? C.gold : C.border}`,
             color: period===p ? C.gold : C.muted,
             fontSize:11, fontWeight:700, cursor:"pointer", transition:"all 0.15s",
-          }}>{p}</button>
+          }}>{p}</FeelButton>
         ))}
       </div>
 

@@ -1,44 +1,46 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, lazy, Suspense } from "react";
+import { Home, ArrowLeftRight, Repeat, Bell, MessageCircle, ShieldCheck, CreditCard } from "lucide-react";
 import { C } from "./theme";
+import { FeelButton } from "./components/UI";
 import { fetchLivePrices, CRYPTO_DATA as FALLBACK } from "./data";
-import { ToastContainer } from "./screens/AlertsScreen";
 import { sendEmail, Emails } from "./notifications";
-import { auth, onAuthStateChanged, signOut } from "./firebase";
-import { db, collection, query, where, getDocs } from "./firebase";
-import LoginScreen        from "./screens/LoginScreen";
-import Dashboard          from "./screens/Dashboard";
-import SendReceive        from "./screens/SendReceive";
-import TradeScreen        from "./screens/TradeScreen";
-import CardsScreen        from "./screens/CardsScreen";
-import PortfolioScreen    from "./screens/PortfolioScreen";
-import TransactionScreen  from "./screens/TransactionScreen";
-import AlertsScreen       from "./screens/AlertsScreen";
-import SettingsScreen     from "./screens/SettingsScreen";
-import AdminScreen        from "./screens/AdminScreen";
-import SupportScreen      from "./screens/SupportScreen";
-import PartnerAdminScreen from "./screens/PartnerAdminScreen";
+import { auth, db, onAuthStateChanged, signOut, doc, getDoc, collection, query, where, getDocs, updateDoc } from "./firebase";
+import LoginScreen       from "./screens/LoginScreen";
+import Dashboard         from "./screens/Dashboard";
+import { ToastContainer } from "./screens/AlertsScreen";
+const LandingScreen     = lazy(() => import("./screens/LandingScreen"));
+const SendReceive       = lazy(() => import("./screens/SendReceive"));
+const TradeScreen       = lazy(() => import("./screens/TradeScreen"));
+const CardsScreen       = lazy(() => import("./screens/CardsScreen"));
+const PortfolioScreen   = lazy(() => import("./screens/PortfolioScreen"));
+const TransactionScreen = lazy(() => import("./screens/TransactionScreen"));
+const AlertsScreen      = lazy(() => import("./screens/AlertsScreen"));
+const SettingsScreen    = lazy(() => import("./screens/SettingsScreen"));
+const AdminScreen       = lazy(() => import("./screens/AdminScreen"));
+const SupportScreen     = lazy(() => import("./screens/SupportScreen"));
 
 const ADMIN_EMAIL = "davehack966@gmail.com";
 
-function NavItem({ icon, label, active, onClick, badge }) {
+function NavItem({ icon: Icon, label, active, onClick, badge }) {
   return (
-    <button onClick={onClick} style={{
+    <FeelButton onClick={onClick} rippleColor={`${C.gold}30`} style={{
       display:"flex", flexDirection:"column", alignItems:"center", gap:4,
       background:"none", border:"none", cursor:"pointer",
       color:active ? C.gold : C.muted,
       padding:"8px 4px", borderRadius:12, transition:"all 0.2s",
-      position:"relative", minWidth:44, flex:1,
+      minWidth:44, flex:1,
     }}>
       {active && <div style={{ position:"absolute", top:0, left:"50%", transform:"translateX(-50%)", width:24, height:2, background:C.gold, borderRadius:2, boxShadow:`0 0 8px ${C.gold}` }} />}
       <div style={{ position:"relative" }}>
-        <span style={{ fontSize:18 }}>{icon}</span>
+        <Icon size={19} strokeWidth={2.2} />
         {badge > 0 && <div style={{ position:"absolute", top:-4, right:-6, width:14, height:14, borderRadius:"50%", background:C.red, display:"flex", alignItems:"center", justifyContent:"center", fontSize:8, fontWeight:800, color:"#fff" }}>{badge}</div>}
       </div>
       <span style={{ fontSize:9, fontWeight:600, letterSpacing:"0.04em" }}>{label}</span>
-    </button>
+    </FeelButton>
   );
 }
 
+// Screens that show a back arrow and title
 const SCREEN_TITLES = {
   send:"Transfer", trade:"Trade", cards:"My Cards",
   portfolio:"Portfolio", history:"History",
@@ -46,60 +48,95 @@ const SCREEN_TITLES = {
   admin:"Admin Panel", support:"Support Chat",
 };
 
-export default function App() {
-  const [loggedIn,      setLoggedIn]      = useState(false);
-  const [authChecked,   setAuthChecked]   = useState(false);
-  const [user,          setUser]          = useState(null);
-  const [tab,           setTab]           = useState("dashboard");
-  const [prevTab,       setPrevTab]       = useState("dashboard");
-  const [mounted,       setMounted]       = useState(false);
-  const [cryptos,       setCryptos]       = useState(FALLBACK);
-  const [priceStatus,   setPriceStatus]   = useState("loading");
-  const [toasts,        setToasts]        = useState([]);
-  const [partnerAdmin,  setPartnerAdmin]  = useState(null);
-  const [partnerLoading,setPartnerLoading]= useState(false);
+// Fixed logical order used only to decide which direction a tab
+// transition should slide in from.
+const TAB_ORDER = ["dashboard","send","trade","portfolio","history","alerts","support","cards","admin","settings"];
+const tabIndex = (t) => { const i = TAB_ORDER.indexOf(t); return i === -1 ? 0 : i; };
 
-  // Auth listener
+const TAB_TRANSITION_CSS = `
+@keyframes tabSlideInRight { from { opacity:0; transform:translateX(20px); } to { opacity:1; transform:translateX(0); } }
+@keyframes tabSlideInLeft  { from { opacity:0; transform:translateX(-20px); } to { opacity:1; transform:translateX(0); } }
+`;
+
+export default function App() {
+  const [loggedIn, setLoggedIn]       = useState(false);
+  const [showLanding, setShowLanding] = useState(true);
+  const [authChecked, setAuthChecked] = useState(false);
+  const [user, setUser]               = useState(null);
+  const [tab, setTab]                 = useState("dashboard");
+  const [prevTab, setPrevTab]         = useState("dashboard");
+  const [mounted, setMounted]         = useState(false);
+  const [cryptos, setCryptos]         = useState(FALLBACK);
+  const [priceStatus, setPriceStatus] = useState("loading");
+  const [toasts, setToasts]           = useState([]);
+
+  // Restore session automatically from Firebase Auth on refresh
   useEffect(() => {
-    const unsub = onAuthStateChanged(auth, (firebaseUser) => {
+    const unsub = onAuthStateChanged(auth, async (firebaseUser) => {
       if (firebaseUser) {
+        let role = "user";
+        let adminId = null;
+
+        try {
+          const profileSnap = await getDoc(doc(db, "users", firebaseUser.uid));
+          if (profileSnap.exists()) {
+            const profile = profileSnap.data();
+            role = profile.role || "user";
+            adminId = profile.adminId || null;
+          }
+
+          // The platform owner remains the Super Admin even if an old
+          // account predates the new users collection.
+          if (firebaseUser.email?.toLowerCase() === ADMIN_EMAIL.toLowerCase()) {
+            role = "super_admin";
+            adminId = null;
+          } else {
+            // Partner admins are provisioned by email from the Super Admin.
+            // Once they sign in, bind their Firebase Auth UID to the admin
+            // profile so subsequent sessions are tied to the same account.
+            const adminQ = query(
+              collection(db, "admins"),
+              where("email", "==", firebaseUser.email?.toLowerCase())
+            );
+            const adminSnap = await getDocs(adminQ);
+            if (!adminSnap.empty) {
+              const adminDoc = adminSnap.docs.find(d => d.data().active !== false);
+              if (adminDoc) {
+                role = "admin";
+                adminId = adminDoc.id;
+                if (adminDoc.data().authUid !== firebaseUser.uid) {
+                  try {
+                    await updateDoc(doc(db, "admins", adminDoc.id), {
+                      authUid: firebaseUser.uid,
+                      lastLoginAt: new Date(),
+                    });
+                  } catch (bindErr) {
+                    console.warn("Could not bind admin account:", bindErr);
+                  }
+                }
+              }
+            }
+          }
+        } catch (e) {
+          console.error("Failed to load Nova role:", e);
+        }
+
         setUser({
-          name:  firebaseUser.displayName || "",
+          name: firebaseUser.displayName || firebaseUser.email?.split("@")[0] || "",
           email: firebaseUser.email || "",
+          uid: firebaseUser.uid,
+          role,
+          adminId,
         });
         setLoggedIn(true);
       } else {
         setUser(null);
         setLoggedIn(false);
-        setPartnerAdmin(null);
       }
       setAuthChecked(true);
     });
     return () => unsub();
   }, []);
-
-  // Check if logged in user is a partner admin
-  useEffect(() => {
-    if (!user?.email) { setPartnerAdmin(null); return; }
-    const email = user.email.toLowerCase();
-    if (email === ADMIN_EMAIL.toLowerCase()) { setPartnerAdmin(null); return; }
-
-    setPartnerLoading(true);
-    getDocs(
-      query(
-        collection(db, "partnerAdmins"),
-        where("email",  "==", email),
-        where("active", "==", true)
-      )
-    ).then(snap => {
-      if (!snap.empty) {
-        setPartnerAdmin({ id: snap.docs[0].id, ...snap.docs[0].data() })
-      } else {
-        setPartnerAdmin(null)
-      }
-      setPartnerLoading(false)
-    }).catch(() => setPartnerLoading(false))
-  }, [user?.email])
 
   useEffect(() => { setTimeout(() => setMounted(true), 50); }, []);
 
@@ -120,66 +157,75 @@ export default function App() {
   };
 
   const handleLogout = async () => {
-    try { await signOut(auth); } catch (e) { console.error("Sign out error:", e); }
-    setTab("dashboard");
-    setPriceStatus("loading");
-    setPartnerAdmin(null);
+    try {
+      await signOut(auth);
+    } catch (e) {
+      console.error("Sign out error:", e);
+    }
+    setTab("dashboard"); setPriceStatus("loading"); setShowLanding(true);
   };
 
-  const goTo  = (newTab) => { setPrevTab(tab); setTab(newTab); };
-  const goBack = () => { setTab(prevTab); };
+  const goTo = (newTab) => {
+    setPrevTab(tab);
+    setTab(newTab);
+  };
+
+  const goBack = () => {
+    setTab(prevTab);
+  };
+
   const dismissToast = (id) => setToasts(p => p.filter(t => t.id !== id));
 
   if (!authChecked) return (
     <div style={{ minHeight:"100dvh", display:"flex", alignItems:"center", justifyContent:"center", background:"#080808" }}>
-      <div style={{ color:"#C9A84C", fontSize:14, letterSpacing:"0.1em" }}>Loading…</div>
+      <div style={{ color:C.gold, fontSize:14, letterSpacing:"0.1em" }}>Loading…</div>
     </div>
   );
 
-  if (!loggedIn) return <LoginScreen onLogin={handleLogin} />;
+  if (!loggedIn) {
+    if (showLanding) return (
+      <Suspense fallback={
+        <div style={{ minHeight:"100dvh", display:"flex", alignItems:"center", justifyContent:"center", background:"#080808" }}>
+          <div style={{ color:C.gold, fontSize:14, letterSpacing:"0.1em" }}>Loading…</div>
+        </div>
+      }>
+        <LandingScreen onEnter={() => setShowLanding(false)} />
+      </Suspense>
+    );
+    return <LoginScreen onLogin={handleLogin} />;
+  }
 
-  const isAdmin        = user?.email?.toLowerCase() === ADMIN_EMAIL.toLowerCase();
-  const isPartnerAdmin = !!partnerAdmin && !isAdmin;
-  const title          = SCREEN_TITLES[tab] || null;
-  const initials       = user?.name
+  const isSuperAdmin = user?.role === "super_admin" || user?.email?.toLowerCase() === ADMIN_EMAIL.toLowerCase();
+  const isAdmin = isSuperAdmin || user?.role === "admin";
+  const title    = SCREEN_TITLES[tab] || null;
+  const initials = user?.name
     ? user.name.split(" ").map(n => n[0]).join("").toUpperCase().slice(0,2)
     : (user?.email?.[0]||"U").toUpperCase();
 
   const NAV_TABS = [
-    { id:"dashboard", icon:"⬡", label:"Home"     },
-    { id:"send",      icon:"⇄", label:"Transfer" },
-    { id:"trade",     icon:"◈", label:"Trade"    },
-    { id:"alerts",    icon:"🔔", label:"Alerts"   },
-    { id:"support",   icon:"💬", label:"Support"  },
-    ...(isAdmin || isPartnerAdmin
-      ? [{ id:"admin", icon:"⚙️", label:"Admin" }]
-      : [{ id:"cards", icon:"▣", label:"Cards"  }]
+    { id:"dashboard", icon:Home,          label:"Home"     },
+    { id:"send",      icon:ArrowLeftRight, label:"Transfer" },
+    { id:"trade",     icon:Repeat,        label:"Trade"    },
+    { id:"alerts",    icon:Bell,          label:"Alerts"   },
+    { id:"support",   icon:MessageCircle, label:"Support"  },
+    ...(isAdmin
+      ? [{ id:"admin", icon:ShieldCheck, label:"Admin" }]
+      : [{ id:"cards", icon:CreditCard,  label:"Cards"  }]
     ),
   ];
 
   const SCREEN_MAP = {
     dashboard: <Dashboard setTab={goTo} cryptos={cryptos} user={user} />,
     send:      <SendReceive cryptos={cryptos} user={user} />,
-    trade:     <TradeScreen cryptos={cryptos} />,
+    trade:     <TradeScreen cryptos={cryptos} user={user} />,
     cards:     <CardsScreen />,
     portfolio: <PortfolioScreen cryptos={cryptos} />,
     history:   <TransactionScreen />,
     alerts:    <AlertsScreen cryptos={cryptos} toasts={toasts} setToasts={setToasts} user={user} />,
-    settings:  <SettingsScreen onLogout={handleLogout} user={user} />,
+    settings:  <SettingsScreen onLogout={handleLogout} user={user} setTab={goTo} />,
+    admin:     <AdminScreen user={user} />,
     support:   <SupportScreen user={user} setTab={goTo} />,
-    admin: isAdmin
-      ? <AdminScreen user={user} />
-      : isPartnerAdmin
-        ? <PartnerAdminScreen user={user} partnerAdmin={partnerAdmin} />
-        : <AdminScreen user={user} />,
   };
-
-  // Show loading while checking partner admin status
-  if (partnerLoading) return (
-    <div style={{ minHeight:"100dvh", display:"flex", alignItems:"center", justifyContent:"center", background:"#080808" }}>
-      <div style={{ color:"#C9A84C", fontSize:14, letterSpacing:"0.1em" }}>Loading…</div>
-    </div>
-  );
 
   return (
     <div style={{
@@ -208,19 +254,32 @@ export default function App() {
           <div>
             {title ? (
               <div style={{ display:"flex", alignItems:"center", gap:10 }}>
-                <button
+                <FeelButton
                   onClick={() => {
-                    if (tab === "support" && window.supportChatOpen) { window.supportCloseChat(); return; }
+                    if (tab === "support" && window.supportChatOpen) {
+                      window.supportCloseChat();
+                      return;
+                    }
                     if (tab === "send" && window.withdrawFlowActive && window.withdrawFlowBack) {
                       const handled = window.withdrawFlowBack();
                       if (handled) return;
                     }
                     goBack();
                   }}
-                  style={{ background:"none", border:"none", color:C.gold, fontSize:18, cursor:"pointer", padding:0 }}
+                  rippleColor={`${C.gold}35`}
+                  style={{
+                    background:"none",
+                    border:"none",
+                    color:C.gold,
+                    fontSize:18,
+                    cursor:"pointer",
+                    padding:6,
+                    margin:-6,
+                    borderRadius:8,
+                  }}
                 >
                   ←
-                </button>
+                </FeelButton>
                 <span style={{ fontSize:18, fontWeight:800, color:C.white }}>{title}</span>
               </div>
             ) : (
@@ -234,12 +293,6 @@ export default function App() {
             )}
           </div>
           <div style={{ display:"flex", alignItems:"center", gap:8, flexShrink:0 }}>
-            {/* Partner admin badge */}
-            {isPartnerAdmin && (
-              <div style={{ display:"flex", alignItems:"center", gap:5, background:`${C.gold}15`, border:`1px solid ${C.gold}30`, borderRadius:20, padding:"4px 10px" }}>
-                <span style={{ fontSize:9, color:C.gold, letterSpacing:"0.08em", fontWeight:700 }}>🤝 PARTNER</span>
-              </div>
-            )}
             <div style={{ display:"flex", alignItems:"center", gap:5, background:C.bgElevated, border:`1px solid ${C.border}`, borderRadius:20, padding:"4px 8px" }}>
               <div style={{ width:6, height:6, borderRadius:"50%", background:priceStatus==="live"?C.green:priceStatus==="error"?C.red:C.gold, boxShadow:`0 0 6px ${priceStatus==="live"?C.green:priceStatus==="error"?C.red:C.gold}` }} />
               <span style={{ fontSize:9, color:C.muted, letterSpacing:"0.08em" }}>{priceStatus==="live"?"LIVE":priceStatus==="error"?"OFFLINE":"LOADING"}</span>
@@ -255,8 +308,15 @@ export default function App() {
       </div>
 
       {/* Screen */}
-      <div style={{ padding:"20px 16px calc(100px + env(safe-area-inset-bottom))" }}>
-        {SCREEN_MAP[tab] || SCREEN_MAP.dashboard}
+      <style>{TAB_TRANSITION_CSS}</style>
+      <div style={{ padding:"20px 16px calc(100px + env(safe-area-inset-bottom))", overflowX:"hidden" }}>
+        <Suspense fallback={<div style={{ textAlign:"center", padding:"80px 0", color:C.muted, fontSize:13 }}>Loading…</div>}>
+          <div key={tab} style={{
+            animation: `${tabIndex(tab) >= tabIndex(prevTab) ? "tabSlideInRight" : "tabSlideInLeft"} 0.32s cubic-bezier(0.16,1,0.3,1) both`,
+          }}>
+            {SCREEN_MAP[tab] || SCREEN_MAP.dashboard}
+          </div>
+        </Suspense>
       </div>
 
       {/* Bottom Nav */}

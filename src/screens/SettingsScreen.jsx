@@ -1,8 +1,33 @@
 import { useState, useEffect } from "react";
+import { Bell, Fingerprint, Eye, KeyRound, ShieldCheck, Laptop, FileKey, FileText, ScrollText, MessageCircle, Star, Coins, Mail, BookOpen, Pencil, Copy, TriangleAlert } from "lucide-react";
 import { C } from "../theme";
-import { Card, GoldDivider, GoldButton } from "../components/UI";
-import { auth, updateProfile } from "../firebase";
+import { Card, GoldDivider, GoldButton, FeelButton } from "../components/UI";
+import { auth, updateProfile, db, doc, getDoc, setDoc } from "../firebase";
 import { useSettings } from "../hooks/useSettings";
+
+const RECOVERY_WORDS = [
+  "vault","quantum","shield","nova","golden","trust","secure","prime","wealth","crypto",
+  "block","chain","cipher","anchor","summit","ledger","onyx","falcon","harbor","orbit",
+  "ember","zenith","lattice","beacon","atlas","cobalt","dune","echo","forge","glacier",
+  "haven","ivory","jade","keystone","lumen","meridian","nomad","opal","pulse","quartz",
+];
+
+// Deterministic per-account phrase so it's stable across sessions but never
+// shared between users, unlike a single hardcoded word list.
+function derivePhrase(seed) {
+  let h1 = 0x811c9dc5, h2 = 0x1b873593;
+  for (let i = 0; i < (seed || "").length; i++) {
+    const c = seed.charCodeAt(i);
+    h1 = Math.imul(h1 ^ c, 2654435761);
+    h2 = Math.imul(h2 ^ c, 0x85ebca6b);
+  }
+  let state = (h1 ^ h2) >>> 0;
+  const next = () => {
+    state = (Math.imul(state ^ (state >>> 15), 1 | state) + 0x27d4eb2f) >>> 0;
+    return (state ^ (state >>> 15)) >>> 0;
+  };
+  return Array.from({ length: 12 }, () => RECOVERY_WORDS[next() % RECOVERY_WORDS.length]);
+}
 
 function Toggle({ value, onChange }) {
   return (
@@ -18,18 +43,47 @@ function Badge({ children, color = C.gold }) {
   );
 }
 
-function SettingRow({ icon, label, sub, right, onClick }) {
+function SettingRow({ icon: Icon, label, sub, right, onClick }) {
   return (
     <div onClick={onClick} style={{ display:"flex", alignItems:"center", gap:14, padding:"14px 18px", cursor:onClick?"pointer":"default" }}
       onMouseEnter={e => { if(onClick) e.currentTarget.style.background=C.bgHover; }}
       onMouseLeave={e => { e.currentTarget.style.background="transparent"; }}
     >
-      <div style={{ width:36, height:36, borderRadius:10, background:C.bgElevated, border:`1px solid ${C.border}`, display:"flex", alignItems:"center", justifyContent:"center", fontSize:16, flexShrink:0 }}>{icon}</div>
+      <div style={{ width:36, height:36, borderRadius:10, background:C.bgElevated, border:`1px solid ${C.border}`, display:"flex", alignItems:"center", justifyContent:"center", color:C.gold, flexShrink:0 }}><Icon size={16} strokeWidth={2} /></div>
       <div style={{ flex:1 }}>
         <div style={{ fontSize:13, fontWeight:600, color:C.white }}>{label}</div>
         {sub && <div style={{ fontSize:11, color:C.muted, marginTop:2 }}>{sub}</div>}
       </div>
       {right}
+    </div>
+  );
+}
+
+const FAQ_ITEMS = [
+  { q: "How do I log in with Face ID or a PIN?", a: "On the login screen, tap \"Authenticate\" to use Face ID, or choose PIN entry and use the code set up on this device. You can switch between Face ID, PIN, and email/password at any time from the login screen." },
+  { q: "How do price alerts work?", a: "Open the Alerts tab, pick an asset, and set a target price with an \"above\" or \"below\" condition. When the live price crosses your target, you'll get an in-app notification and an email." },
+  { q: "How do I change my display currency?", a: "Go to Settings → Preferences → Display Currency and choose USD, EUR, or GBP. Your balance and prices update everywhere in the app using live exchange rates." },
+  { q: "How do I hide my balance?", a: "Toggle \"Hide Balance\" under Settings → Preferences to mask your portfolio value on the Dashboard, useful when your screen is visible to others." },
+  { q: "How do I update my card PIN?", a: "Open the Cards tab, select your card, and choose \"Change PIN\" to set a new 6-digit PIN." },
+  { q: "How do I reset my password?", a: "Go to Settings → Security → Change Password. We'll email you a secure reset link." },
+  { q: "How do I reach a human on the support team?", a: "Use Live Chat from Settings → Support, or the Support tab in the main navigation — messages are answered by our team in the order received." },
+];
+
+function FaqAccordion() {
+  const [open, setOpen] = useState(null);
+  return (
+    <div style={{ display:"flex", flexDirection:"column", gap:8, maxHeight:"55vh", overflowY:"auto" }}>
+      {FAQ_ITEMS.map((item, i) => (
+        <div key={item.q} style={{ background:C.bgElevated, border:`1px solid ${C.border}`, borderRadius:12, overflow:"hidden" }}>
+          <div onClick={() => setOpen(open === i ? null : i)} style={{ padding:"14px 16px", display:"flex", justifyContent:"space-between", alignItems:"center", cursor:"pointer", gap:12 }}>
+            <span style={{ fontSize:13, fontWeight:700, color:C.white }}>{item.q}</span>
+            <span style={{ fontSize:14, color:C.gold, flexShrink:0, transform:open===i?"rotate(180deg)":"none", transition:"transform 0.2s" }}>⌄</span>
+          </div>
+          {open === i && (
+            <div style={{ padding:"0 16px 14px", fontSize:12, color:C.mutedLight, lineHeight:1.7 }}>{item.a}</div>
+          )}
+        </div>
+      ))}
     </div>
   );
 }
@@ -46,7 +100,7 @@ function ActionModal({ title, children, onClose }) {
   );
 }
 
-export default function SettingsScreen({ onLogout, user }) {
+export default function SettingsScreen({ onLogout, user, setTab }) {
   const { settings: globalSettings, updateSettings: updateGlobalSettings } = useSettings();
 
   const [notifs, setNotifs]         = useState(true);
@@ -64,6 +118,28 @@ export default function SettingsScreen({ onLogout, user }) {
   useEffect(() => {
     if (user?.name) setDisplayName(user.name);
   }, [user]);
+
+  // Load the persisted 2FA preference so the toggle reflects real saved
+  // state instead of resetting to off on every visit.
+  useEffect(() => {
+    if (!user?.uid) return;
+    let alive = true;
+    getDoc(doc(db, "users", user.uid)).then(snap => {
+      if (alive && snap.exists()) setTwoFA(snap.data().twoFAEnabled === true);
+    }).catch(console.error);
+    return () => { alive = false; };
+  }, [user?.uid]);
+
+  const toggleTwoFA = async (v) => {
+    setTwoFA(v);
+    showConfirmed(v ? "2FA enabled" : "2FA disabled");
+    if (!user?.uid) return;
+    try {
+      await setDoc(doc(db, "users", user.uid), { twoFAEnabled: v }, { merge: true });
+    } catch (e) {
+      console.error("Failed to save 2FA preference:", e);
+    }
+  };
 
   // Sync currency from global settings (Firestore)
   useEffect(() => {
@@ -108,7 +184,7 @@ export default function SettingsScreen({ onLogout, user }) {
     <div style={{ display:"flex", flexDirection:"column", gap:20 }}>
 
       {/* Profile card */}
-      <Card hover={false} style={{ background:"linear-gradient(135deg,#0f0f0f,#1a1400)", border:`1px solid ${C.borderStrong}`, textAlign:"center", padding:"28px 24px" }}>
+      <Card hover={false} style={{ background:"linear-gradient(135deg,#0f0f0f,#1f1005)", border:`1px solid ${C.borderStrong}`, textAlign:"center", padding:"28px 24px" }}>
         <div style={{ width:72, height:72, borderRadius:"50%", background:`linear-gradient(135deg,${C.gold},${C.goldDim})`, display:"flex", alignItems:"center", justifyContent:"center", fontSize:26, fontWeight:800, color:"#000", margin:"0 auto 14px" }}>{initials}</div>
 
         {editing ? (
@@ -118,14 +194,14 @@ export default function SettingsScreen({ onLogout, user }) {
               onChange={e => setDisplayName(e.target.value)}
               style={{ background:C.bgElevated, border:`1px solid ${C.gold}`, borderRadius:8, padding:"8px 12px", color:C.white, fontSize:14, fontWeight:700, outline:"none", textAlign:"center", width:180 }}
             />
-            <button onClick={saveName} disabled={saving} style={{ background:C.gold, border:"none", borderRadius:8, padding:"8px 14px", color:"#000", fontWeight:700, cursor:"pointer" }}>
+            <FeelButton onClick={saveName} disabled={saving} style={{ background:C.gold, border:"none", borderRadius:8, padding:"8px 14px", color:"#000", fontWeight:700, cursor:"pointer" }}>
               {saving ? "…" : "✓"}
-            </button>
-            <button onClick={() => { setEditing(false); setDisplayName(user?.name||""); }} style={{ background:C.bgElevated, border:`1px solid ${C.border}`, borderRadius:8, padding:"8px 12px", color:C.muted, fontWeight:700, cursor:"pointer" }}>✕</button>
+            </FeelButton>
+            <FeelButton onClick={() => { setEditing(false); setDisplayName(user?.name||""); }} style={{ background:C.bgElevated, border:`1px solid ${C.border}`, borderRadius:8, padding:"8px 12px", color:C.muted, fontWeight:700, cursor:"pointer" }}>✕</FeelButton>
           </div>
         ) : (
-          <div style={{ fontSize:18, fontWeight:800, color:C.white, cursor:"pointer" }} onClick={() => setEditing(true)}>
-            {displayName || user?.name || "User"} <span style={{ fontSize:12, color:C.gold }}>✎</span>
+          <div style={{ fontSize:18, fontWeight:800, color:C.white, cursor:"pointer", display:"inline-flex", alignItems:"center", gap:6 }} onClick={() => setEditing(true)}>
+            {displayName || user?.name || "User"} <Pencil size={13} color={C.gold} strokeWidth={2.2} />
           </div>
         )}
 
@@ -145,21 +221,21 @@ export default function SettingsScreen({ onLogout, user }) {
       <div>
         <div style={{ fontSize:11, color:C.muted, letterSpacing:"0.12em", textTransform:"uppercase", marginBottom:10, paddingLeft:4 }}>Preferences</div>
         <Card hover={false} style={{ padding:0, overflow:"hidden" }}>
-          <SettingRow icon="🔔" label="Push Notifications" sub="Price alerts and activity" right={<Toggle value={notifs} onChange={v => { setNotifs(v); showConfirmed(v?"Notifications enabled":"Notifications disabled"); }} />} />
+          <SettingRow icon={Bell} label="Push Notifications" sub="Price alerts and activity" right={<Toggle value={notifs} onChange={v => { setNotifs(v); showConfirmed(v?"Notifications enabled":"Notifications disabled"); }} />} />
           <GoldDivider margin="0 18px" />
-          <SettingRow icon="⬡" label="Biometric Login" sub="Face ID / Fingerprint" right={<Toggle value={biometric} onChange={v => { setBiometric(v); showConfirmed(v?"Biometric enabled":"Biometric disabled"); }} />} />
+          <SettingRow icon={Fingerprint} label="Biometric Login" sub="Face ID / Fingerprint" right={<Toggle value={biometric} onChange={v => { setBiometric(v); showConfirmed(v?"Biometric enabled":"Biometric disabled"); }} />} />
           <GoldDivider margin="0 18px" />
-          <SettingRow icon="👁" label="Hide Balance" sub="Mask portfolio value" right={<Toggle value={hideBalance} onChange={v => { setHideBalance(v); showConfirmed(v?"Balance hidden":"Balance visible"); }} />} />
+          <SettingRow icon={Eye} label="Hide Balance" sub="Mask portfolio value" right={<Toggle value={hideBalance} onChange={v => { setHideBalance(v); showConfirmed(v?"Balance hidden":"Balance visible"); }} />} />
           <GoldDivider margin="0 18px" />
           <div style={{ padding:"14px 18px", display:"flex", alignItems:"center", gap:14 }}>
-            <div style={{ width:36, height:36, borderRadius:10, background:C.bgElevated, border:`1px solid ${C.border}`, display:"flex", alignItems:"center", justifyContent:"center", fontSize:16 }}>💱</div>
+            <div style={{ width:36, height:36, borderRadius:10, background:C.bgElevated, border:`1px solid ${C.border}`, display:"flex", alignItems:"center", justifyContent:"center", color:C.gold }}><Coins size={16} strokeWidth={2} /></div>
             <div style={{ flex:1 }}>
               <div style={{ fontSize:13, fontWeight:600, color:C.white }}>Display Currency</div>
               <div style={{ fontSize:11, color:C.muted, marginTop:2 }}>Converts balance everywhere in the app</div>
             </div>
             <div style={{ display:"flex", gap:6 }}>
               {["USD","EUR","GBP"].map(c => (
-                <button key={c} onClick={() => changeCurrency(c)} style={{ padding:"5px 10px", borderRadius:8, fontSize:11, fontWeight:700, cursor:"pointer", background:currency===c?C.gold:C.bgElevated, color:currency===c?"#000":C.muted, border:`1px solid ${currency===c?C.gold:C.border}`, transition:"all 0.15s" }}>{c}</button>
+                <FeelButton key={c} onClick={() => changeCurrency(c)} style={{ padding:"5px 10px", borderRadius:8, fontSize:11, fontWeight:700, cursor:"pointer", background:currency===c?C.gold:C.bgElevated, color:currency===c?"#000":C.muted, border:`1px solid ${currency===c?C.gold:C.border}`, transition:"all 0.15s" }}>{c}</FeelButton>
               ))}
             </div>
           </div>
@@ -170,13 +246,13 @@ export default function SettingsScreen({ onLogout, user }) {
       <div>
         <div style={{ fontSize:11, color:C.muted, letterSpacing:"0.12em", textTransform:"uppercase", marginBottom:10, paddingLeft:4 }}>Security</div>
         <Card hover={false} style={{ padding:0, overflow:"hidden" }}>
-          <SettingRow icon="🔑" label="Change Password" sub="Update your login password" right={<span style={{ color:C.muted, fontSize:16 }}>›</span>} onClick={() => setModal("password")} />
+          <SettingRow icon={KeyRound} label="Change Password" sub="Update your login password" right={<span style={{ color:C.muted, fontSize:16 }}>›</span>} onClick={() => setModal("password")} />
           <GoldDivider margin="0 18px" />
-          <SettingRow icon="🛡" label="Two-Factor Auth" sub={twoFA?"Enabled — SMS verification":"Disabled"} right={<Toggle value={twoFA} onChange={v => { setTwoFA(v); showConfirmed(v?"2FA enabled":"2FA disabled"); }} />} />
+          <SettingRow icon={ShieldCheck} label="Two-Factor Auth" sub={twoFA?"Enabled — SMS verification":"Disabled"} right={<Toggle value={twoFA} onChange={toggleTwoFA} />} />
           <GoldDivider margin="0 18px" />
-          <SettingRow icon="📋" label="Active Sessions" sub="2 devices connected" right={<span style={{ color:C.muted, fontSize:16 }}>›</span>} onClick={() => setModal("sessions")} />
+          <SettingRow icon={Laptop} label="Active Sessions" sub="View this session" right={<span style={{ color:C.muted, fontSize:16 }}>›</span>} onClick={() => setModal("sessions")} />
           <GoldDivider margin="0 18px" />
-          <SettingRow icon="🔐" label="Recovery Phrase" sub="Back up your wallet" right={<span style={{ color:C.muted, fontSize:16 }}>›</span>} onClick={() => setModal("recovery")} />
+          <SettingRow icon={FileKey} label="Recovery Phrase" sub="Back up your wallet" right={<span style={{ color:C.muted, fontSize:16 }}>›</span>} onClick={() => setModal("recovery")} />
         </Card>
       </div>
 
@@ -185,10 +261,10 @@ export default function SettingsScreen({ onLogout, user }) {
         <div style={{ fontSize:11, color:C.muted, letterSpacing:"0.12em", textTransform:"uppercase", marginBottom:10, paddingLeft:4 }}>About</div>
         <Card hover={false} style={{ padding:0, overflow:"hidden" }}>
           {[
-            { icon:"📄", label:"Privacy Policy",  sub:"How we handle your data", onClick:() => window.open("https://www.termsfeed.com/live/privacy-policy","_blank") },
-            { icon:"📜", label:"Terms of Service", sub:"User agreement",          onClick:() => window.open("https://www.termsfeed.com/live/terms-of-service","_blank") },
-            { icon:"💬", label:"Support",          sub:"Chat with our team",      onClick:() => setModal("support") },
-            { icon:"⭐", label:"Rate NOVA Vault",  sub:"Leave us a review",       onClick:() => showConfirmed("Thank you for your support! ⭐") },
+            { icon:FileText,     label:"Privacy Policy",  sub:"How we handle your data", onClick:() => window.open("https://www.termsfeed.com/live/privacy-policy","_blank") },
+            { icon:ScrollText,   label:"Terms of Service", sub:"User agreement",          onClick:() => window.open("https://www.termsfeed.com/live/terms-of-service","_blank") },
+            { icon:MessageCircle, label:"Support",          sub:"Chat with our team",      onClick:() => setModal("support") },
+            { icon:Star,         label:"Rate NOVA Vault",  sub:"Leave us a review",       onClick:() => showConfirmed("Thank you for your support! ⭐") },
           ].map((item,i,arr) => (
             <div key={item.label}>
               <SettingRow {...item} right={<span style={{ color:C.muted, fontSize:16 }}>›</span>} />
@@ -211,7 +287,7 @@ export default function SettingsScreen({ onLogout, user }) {
         <ActionModal title="Change Password" onClose={() => setModal(null)}>
           <div style={{ display:"flex", flexDirection:"column", gap:14 }}>
             <div style={{ fontSize:12, color:C.muted, lineHeight:1.7 }}>A password reset link will be sent to <span style={{ color:C.gold }}>{user?.email}</span></div>
-            <button onClick={async () => {
+            <FeelButton onClick={async () => {
               try {
                 const { sendPasswordResetEmail } = await import("../firebase");
                 await sendPasswordResetEmail(auth, user?.email);
@@ -220,61 +296,70 @@ export default function SettingsScreen({ onLogout, user }) {
               setModal(null);
             }} style={{ background:C.gold, border:"none", borderRadius:12, padding:"14px", color:"#000", fontWeight:700, fontSize:14, cursor:"pointer", width:"100%" }}>
               Send Reset Email →
-            </button>
+            </FeelButton>
           </div>
         </ActionModal>
       )}
 
-      {modal === "sessions" && (
-        <ActionModal title="Active Sessions" onClose={() => setModal(null)}>
-          <div style={{ display:"flex", flexDirection:"column", gap:12 }}>
-            {[
-              { device:"MacBook Air", location:"Current session", time:"Now", current:true },
-              { device:"iPhone 15",   location:"Last seen 2h ago", time:"May 23", current:false },
-            ].map(s => (
-              <div key={s.device} style={{ display:"flex", alignItems:"center", gap:12, padding:"12px 14px", background:C.bgElevated, borderRadius:12, border:`1px solid ${s.current?C.gold:C.border}` }}>
-                <div style={{ fontSize:24 }}>{s.current?"💻":"📱"}</div>
+      {modal === "sessions" && (() => {
+        const ua = navigator.userAgent || "";
+        const deviceLabel = /iPhone|iPad/.test(ua) ? "iOS Device"
+          : /Android/.test(ua) ? "Android Device"
+          : /Macintosh/.test(ua) ? "Mac"
+          : /Windows/.test(ua) ? "Windows PC"
+          : "This Device";
+        const browserLabel = /Edg\//.test(ua) ? "Edge" : /Chrome\//.test(ua) ? "Chrome" : /Firefox\//.test(ua) ? "Firefox" : /Safari\//.test(ua) ? "Safari" : "Browser";
+        const lastSignIn = auth.currentUser?.metadata?.lastSignInTime;
+        return (
+          <ActionModal title="Active Sessions" onClose={() => setModal(null)}>
+            <div style={{ display:"flex", flexDirection:"column", gap:12 }}>
+              <div style={{ display:"flex", alignItems:"center", gap:12, padding:"12px 14px", background:C.bgElevated, borderRadius:12, border:`1px solid ${C.gold}` }}>
+                <div style={{ color:C.gold }}><Laptop size={22} strokeWidth={1.9} /></div>
                 <div style={{ flex:1 }}>
-                  <div style={{ fontSize:13, fontWeight:700, color:C.white }}>{s.device}</div>
-                  <div style={{ fontSize:11, color:C.muted }}>{s.location} · {s.time}</div>
+                  <div style={{ fontSize:13, fontWeight:700, color:C.white }}>{deviceLabel} · {browserLabel}</div>
+                  <div style={{ fontSize:11, color:C.muted }}>Signed in {lastSignIn ? new Date(lastSignIn).toLocaleString() : "now"}</div>
                 </div>
-                {s.current ? <Badge color={C.green}>Active</Badge> : <button style={{ fontSize:11, color:C.red, background:"none", border:`1px solid ${C.red}40`, borderRadius:6, padding:"4px 10px", cursor:"pointer" }}>Revoke</button>}
+                <Badge color={C.green}>Active</Badge>
               </div>
-            ))}
-          </div>
-        </ActionModal>
-      )}
+              <div style={{ fontSize:11, color:C.muted, lineHeight:1.7 }}>This is the only session NOVA Vault can currently verify. Sign out from Settings to end it.</div>
+            </div>
+          </ActionModal>
+        );
+      })()}
 
-      {modal === "recovery" && (
-        <ActionModal title="Recovery Phrase" onClose={() => setModal(null)}>
-          <div style={{ display:"flex", flexDirection:"column", gap:14 }}>
-            <div style={{ background:`${C.red}10`, border:`1px solid ${C.red}30`, borderRadius:10, padding:"12px 14px" }}>
-              <div style={{ fontSize:12, color:C.red, fontWeight:700, marginBottom:4 }}>⚠️ Keep this secret</div>
-              <div style={{ fontSize:11, color:C.mutedLight, lineHeight:1.7 }}>Never share your recovery phrase with anyone. NOVA Vault staff will never ask for it.</div>
+      {modal === "recovery" && (() => {
+        const phrase = derivePhrase(user?.uid || user?.email || "nova-vault");
+        return (
+          <ActionModal title="Recovery Phrase" onClose={() => setModal(null)}>
+            <div style={{ display:"flex", flexDirection:"column", gap:14 }}>
+              <div style={{ background:`${C.red}10`, border:`1px solid ${C.red}30`, borderRadius:10, padding:"12px 14px" }}>
+                <div style={{ fontSize:12, color:C.red, fontWeight:700, marginBottom:4, display:"flex", alignItems:"center", gap:6 }}><TriangleAlert size={13} /> Keep this secret</div>
+                <div style={{ fontSize:11, color:C.mutedLight, lineHeight:1.7 }}>Never share your recovery phrase with anyone. NOVA Vault staff will never ask for it.</div>
+              </div>
+              <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:8 }}>
+                {phrase.map((w,i) => (
+                  <div key={`${w}-${i}`} style={{ background:C.bgElevated, border:`1px solid ${C.border}`, borderRadius:8, padding:"8px 10px", textAlign:"center" }}>
+                    <div style={{ fontSize:9, color:C.muted }}>{i+1}</div>
+                    <div style={{ fontSize:12, fontWeight:700, color:C.white }}>{w}</div>
+                  </div>
+                ))}
+              </div>
+              <FeelButton onClick={() => { navigator.clipboard?.writeText(phrase.join(" ")); showConfirmed("Recovery phrase copied!"); setModal(null); }} style={{ background:C.gold, border:"none", borderRadius:12, padding:"13px", color:"#000", fontWeight:700, cursor:"pointer", width:"100%", display:"flex", alignItems:"center", justifyContent:"center", gap:8 }}><Copy size={16} strokeWidth={2.2} /> Copy Phrase</FeelButton>
             </div>
-            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:8 }}>
-              {["vault","quantum","shield","nova","golden","trust","secure","prime","wealth","crypto","block","chain"].map((w,i) => (
-                <div key={w} style={{ background:C.bgElevated, border:`1px solid ${C.border}`, borderRadius:8, padding:"8px 10px", textAlign:"center" }}>
-                  <div style={{ fontSize:9, color:C.muted }}>{i+1}</div>
-                  <div style={{ fontSize:12, fontWeight:700, color:C.white }}>{w}</div>
-                </div>
-              ))}
-            </div>
-            <button onClick={() => { navigator.clipboard?.writeText("vault quantum shield nova golden trust secure prime wealth crypto block chain"); showConfirmed("Recovery phrase copied!"); setModal(null); }} style={{ background:C.gold, border:"none", borderRadius:12, padding:"13px", color:"#000", fontWeight:700, cursor:"pointer", width:"100%" }}>📋 Copy Phrase</button>
-          </div>
-        </ActionModal>
-      )}
+          </ActionModal>
+        );
+      })()}
 
       {modal === "support" && (
         <ActionModal title="Support" onClose={() => setModal(null)}>
           <div style={{ display:"flex", flexDirection:"column", gap:12 }}>
             {[
-              { icon:"💬", label:"Live Chat",      sub:"Available 24/7",         action:() => showConfirmed("Live chat coming soon!") },
-              { icon:"📧", label:"Email Support",  sub:"support@novavault.io",   action:() => window.open("mailto:support@novavault.io") },
-              { icon:"📖", label:"Help Center",    sub:"FAQs and guides",        action:() => showConfirmed("Help center coming soon!") },
-            ].map(({ icon,label,sub,action }) => (
+              { icon:MessageCircle, label:"Live Chat",      sub:"Available 24/7",         action:() => setTab && setTab("support") },
+              { icon:Mail,          label:"Email Support",  sub:"support@novavault.io",   action:() => window.open("mailto:support@novavault.io") },
+              { icon:BookOpen,      label:"Help Center",    sub:"FAQs and guides",        action:() => setModal("helpCenter") },
+            ].map(({ icon:Icon,label,sub,action }) => (
               <div key={label} onClick={() => { action(); setModal(null); }} style={{ display:"flex", alignItems:"center", gap:14, padding:"14px 16px", background:C.bgElevated, borderRadius:12, border:`1px solid ${C.border}`, cursor:"pointer" }}>
-                <div style={{ fontSize:24 }}>{icon}</div>
+                <div style={{ color:C.gold }}><Icon size={22} strokeWidth={1.9} /></div>
                 <div>
                   <div style={{ fontSize:13, fontWeight:700, color:C.white }}>{label}</div>
                   <div style={{ fontSize:11, color:C.muted }}>{sub}</div>
@@ -282,6 +367,12 @@ export default function SettingsScreen({ onLogout, user }) {
               </div>
             ))}
           </div>
+        </ActionModal>
+      )}
+
+      {modal === "helpCenter" && (
+        <ActionModal title="Help Center" onClose={() => setModal(null)}>
+          <FaqAccordion />
         </ActionModal>
       )}
     </div>

@@ -1,0 +1,188 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function isSuperAdmin() {
+      return signedIn() &&
+        request.auth.token.email == "davehack966@gmail.com";
+    }
+
+    function isPartnerAdmin(adminId) {
+      return signedIn() &&
+        adminId != null &&
+        exists(/databases/$(database)/documents/admins/$(adminId)) &&
+        get(/databases/$(database)/documents/admins/$(adminId)).data.authUid == request.auth.uid &&
+        get(/databases/$(database)/documents/admins/$(adminId)).data.active == true;
+    }
+
+    function isAssignedAdminForUser(userId) {
+      return signedIn() &&
+        exists(/databases/$(database)/documents/users/$(userId)) &&
+        isPartnerAdmin(get(/databases/$(database)/documents/users/$(userId)).data.adminId);
+    }
+
+    // Public registration-code lookup. Only the active referral record is exposed.
+    match /referralLinks/{code} {
+      allow get: if isSuperAdmin() || (exists(/databases/$(database)/documents/referralLinks/$(code)) && get(/databases/$(database)/documents/referralLinks/$(code)).data.active == true);
+      allow list: if false;
+      allow create, delete: if isSuperAdmin();
+      allow update: if isSuperAdmin() ||
+        (signedIn() &&
+          resource.data.email == request.auth.token.email &&
+          resource.data.active == true &&
+          resource.data.role == "admin" &&
+          request.resource.data.email == resource.data.email &&
+          request.resource.data.role == resource.data.role &&
+          request.resource.data.permissions == resource.data.permissions &&
+          request.resource.data.referralCode == resource.data.referralCode &&
+          request.resource.data.active == resource.data.active &&
+          request.resource.data.authUid == request.auth.uid);
+    }
+
+    match /admins/{adminId} {
+      // Super Admin can manage all partner admins. A partner may read only
+      // the profile that has already been bound to their Firebase UID.
+      allow read: if isSuperAdmin() ||
+        (signedIn() && (
+          resource.data.authUid == request.auth.uid ||
+          resource.data.email == request.auth.token.email
+        ));
+      allow create, delete: if isSuperAdmin();
+      allow update: if isSuperAdmin() ||
+        (signedIn() &&
+          resource.data.email == request.auth.token.email &&
+          resource.data.role == "admin" &&
+          resource.data.active == true &&
+          request.resource.data.email == resource.data.email &&
+          request.resource.data.role == resource.data.role &&
+          request.resource.data.active == resource.data.active &&
+          request.resource.data.referralCode == resource.data.referralCode &&
+          request.resource.data.permissions == resource.data.permissions &&
+          request.resource.data.authUid == request.auth.uid);
+    }
+
+    match /users/{userId} {
+      allow read: if isSuperAdmin() ||
+        (signedIn() && request.auth.uid == userId) ||
+        isPartnerAdmin(resource.data.adminId);
+
+      // New customers create their own profile. If a referral is supplied,
+      // it must point to the same adminId as the referral document. The
+      // Super Admin may also create/backfill a profile directly, which is
+      // required when assigning a legacy user (wallet-only, pre-dating the
+      // users collection) to a partner admin from the Admin Panel.
+      allow create: if isSuperAdmin() ||
+        (signedIn() &&
+          request.auth.uid == userId &&
+          request.resource.data.role == "user" &&
+          (
+            request.resource.data.adminId == null ||
+            (
+              request.resource.data.referralCode != null &&
+              get(/databases/$(database)/documents/referralLinks/$(request.resource.data.referralCode)).data.active == true &&
+              get(/databases/$(database)/documents/referralLinks/$(request.resource.data.referralCode)).data.adminId == request.resource.data.adminId
+            )
+          )
+        );
+
+      allow update, delete: if isSuperAdmin() ||
+        (signedIn() && request.auth.uid == userId &&
+          request.resource.data.role == resource.data.role &&
+          request.resource.data.adminId == resource.data.adminId);
+    }
+
+    match /wallets/{userId} {
+      allow read: if isSuperAdmin() ||
+        (signedIn() && request.auth.uid == userId) ||
+        isPartnerAdmin(resource.data.adminId);
+
+      // Existing Nova Vault performs client-side wallet mutations. These
+      // remain allowed for the account owner to preserve current behavior.
+      // For production financial balances, move balance-changing operations
+      // to trusted server-side code / Cloud Functions.
+      allow create: if isSuperAdmin() || (signedIn() && request.auth.uid == userId);
+      allow update: if isSuperAdmin() ||
+        (signedIn() && request.auth.uid == userId) ||
+        isAssignedAdminForUser(userId);
+      allow delete: if isSuperAdmin();
+    }
+
+    match /balanceLedger/{entryId} {
+      allow read: if isSuperAdmin() ||
+        (signedIn() && resource.data.actorUid == request.auth.uid);
+      allow create: if isSuperAdmin() || isPartnerAdmin(request.resource.data.adminId);
+      allow update, delete: if isSuperAdmin();
+    }
+
+    match /auditLogs/{logId} {
+      allow read: if isSuperAdmin() ||
+        (signedIn() && resource.data.actorUid == request.auth.uid);
+      allow create: if isSuperAdmin() || isPartnerAdmin(request.resource.data.adminId);
+      allow update, delete: if isSuperAdmin();
+    }
+
+    match /transactions/{txId} {
+      allow read: if isSuperAdmin() ||
+        (signedIn() && (
+          resource.data.fromUid == request.auth.uid ||
+          resource.data.toUid == request.auth.uid ||
+          isPartnerAdmin(resource.data.adminId)
+        ));
+      allow create: if signedIn();
+      allow update: if isSuperAdmin() ||
+        (signedIn() && (
+          resource.data.fromUid == request.auth.uid ||
+          isPartnerAdmin(resource.data.adminId)
+        ));
+      allow delete: if isSuperAdmin();
+    }
+
+    match /withdrawals/{withdrawalId} {
+      allow read: if isSuperAdmin() ||
+        (signedIn() && (
+          resource.data.uid == request.auth.uid ||
+          isPartnerAdmin(resource.data.adminId)
+        ));
+      allow create: if signedIn() && request.resource.data.uid == request.auth.uid;
+      allow update: if isSuperAdmin() ||
+        (signedIn() && isPartnerAdmin(resource.data.adminId));
+      allow delete: if isSuperAdmin();
+    }
+
+    match /support/{messageId} {
+      allow read: if isSuperAdmin() ||
+        (signedIn() && resource.data.uid == request.auth.uid);
+      // The Super Admin replies on a customer's own thread, so the
+      // document's uid is the customer's, not the admin's — only the
+      // Super Admin may create a support message under someone else's uid.
+      allow create: if isSuperAdmin() ||
+        (signedIn() && request.resource.data.uid == request.auth.uid);
+      allow update, delete: if isSuperAdmin();
+    }
+
+    // Existing app settings are controlled by the Super Admin.
+    match /settings/{settingId} {
+      allow read: if signedIn();
+      allow write: if isSuperAdmin();
+    }
+
+    // Per-user price alerts (Alerts tab). Each user manages only their own.
+    match /priceAlerts/{alertId} {
+      allow read: if isSuperAdmin() ||
+        (signedIn() && resource.data.uid == request.auth.uid);
+      allow create: if signedIn() && request.resource.data.uid == request.auth.uid;
+      allow update, delete: if isSuperAdmin() ||
+        (signedIn() && resource.data.uid == request.auth.uid);
+    }
+
+    // Fallback: deny everything not explicitly covered.
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

@@ -1,11 +1,12 @@
 import { useState, useEffect } from "react";
-import { ArrowUp, ArrowDown, RefreshCw, PieChart, ArrowUpRight, ArrowDownRight } from "lucide-react";
+import { ArrowUp, ArrowDown, RefreshCw, PieChart, ArrowUpRight, ArrowDownRight, Settings as SettingsIcon, ChevronDown, FileText } from "lucide-react";
 import { C } from "../theme";
 import { CHART_DATA } from "../data";
-import { Card, GoldDivider, Badge, AnimatedNumber, Sparkline } from "../components/UI";
-import { db, auth, doc, setDoc, collection, query, where, orderBy, onSnapshot, getDocs } from "../firebase";
+import { Card, GoldDivider, Badge, Sparkline, FeelButton, Reveal, AnimatedNumber } from "../components/UI";
+import { db, auth, doc, setDoc, collection, query, where, onSnapshot, getDocs } from "../firebase";
 import { useSettings } from "../hooks/useSettings";
 import { useCurrency } from "../hooks/useCurrency";
+import { downloadReceipt } from "../utils/receipt";
 
 const ADMIN_EMAIL = "davehack966@gmail.com";
 
@@ -37,7 +38,7 @@ function AdminBalanceEditor({ uid, balance, user, onClose }) {
   return (
     <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.88)", zIndex:200, display:"flex", alignItems:"center", justifyContent:"center", padding:24 }}>
       <div style={{ background:C.bgCard, border:`1px solid ${C.borderStrong}`, borderRadius:20, padding:28, width:"100%", maxWidth:380 }}>
-        <div style={{ fontSize:16, fontWeight:800, color:C.white, marginBottom:4 }}>⚙️ Admin Panel</div>
+        <div style={{ fontSize:16, fontWeight:800, color:C.white, marginBottom:4, display:"flex", alignItems:"center", gap:7 }}><SettingsIcon size={16} /> Admin Panel</div>
         <div style={{ fontSize:12, color:C.muted, marginBottom:20 }}>Set balance for yourself or any user by email.</div>
         <div style={{ display:"flex", flexDirection:"column", gap:14, marginBottom:16 }}>
           <div>
@@ -58,10 +59,10 @@ function AdminBalanceEditor({ uid, balance, user, onClose }) {
           <div style={{ marginBottom:14, padding:"10px 14px", borderRadius:10, background:msg.startsWith("✓")?`${C.green}15`:`${C.red}15`, border:`1px solid ${msg.startsWith("✓")?C.green:C.red}30`, color:msg.startsWith("✓")?C.green:C.red, fontSize:12, fontWeight:600 }}>{msg}</div>
         )}
         <div style={{ display:"flex", gap:10 }}>
-          <button onClick={onClose} style={{ flex:1, padding:"13px", borderRadius:12, background:C.bgElevated, border:`1px solid ${C.border}`, color:C.white, fontWeight:700, cursor:"pointer" }}>Cancel</button>
-          <button onClick={save} disabled={saving} style={{ flex:1, padding:"13px", borderRadius:12, background:`linear-gradient(135deg,${C.gold},${C.goldDim})`, border:"none", color:"#000", fontWeight:700, cursor:"pointer" }}>
+          <FeelButton onClick={onClose} style={{ flex:1, padding:"13px", borderRadius:12, background:C.bgElevated, border:`1px solid ${C.border}`, color:C.white, fontWeight:700, cursor:"pointer" }}>Cancel</FeelButton>
+          <FeelButton onClick={save} disabled={saving} style={{ flex:1, padding:"13px", borderRadius:12, background:`linear-gradient(135deg,${C.gold},${C.goldDim})`, border:"none", color:"#000", fontWeight:700, cursor:"pointer" }}>
             {saving?"Saving…":"Set Balance ✓"}
-          </button>
+          </FeelButton>
         </div>
       </div>
     </div>
@@ -95,17 +96,20 @@ function PctPill({ value }) {
 
 export default function Dashboard({ setTab, cryptos, user }) {
   const [balance, setBalance]           = useState(0);
+  const [holdings, setHoldings]         = useState({});
   const [transactions, setTransactions] = useState([]);
   const [showEditor, setShowEditor]     = useState(false);
   const [visible, setVisible]           = useState(false);
   const [loadingTx, setLoadingTx]       = useState(true);
+  const [expandedTxId, setExpandedTxId] = useState(null);
+  const [walletLoaded, setWalletLoaded] = useState(false);
 
   const uid     = auth.currentUser?.uid;
   const isAdmin = user?.email?.toLowerCase() === ADMIN_EMAIL.toLowerCase();
 
   // Currency conversion
   const { settings: appSettings } = useSettings();
-  const { format } = useCurrency(appSettings.currency || "USD");
+  const { format, convert, symbol } = useCurrency(appSettings.currency || "USD");
 
   useEffect(() => { setTimeout(() => setVisible(true), 100); }, []);
 
@@ -116,6 +120,7 @@ export default function Dashboard({ setTab, cryptos, user }) {
     const unsub = onSnapshot(ref, snap => {
       if (snap.exists()) {
         setBalance(snap.data().usdBalance || 0);
+        setHoldings(snap.data().holdings || {});
         // Keep email/name synced
         setDoc(ref, { email: user.email.toLowerCase(), name: user.name || "" }, { merge:true });
       } else {
@@ -126,6 +131,7 @@ export default function Dashboard({ setTab, cryptos, user }) {
           createdAt: new Date().toISOString(),
         });
       }
+      setWalletLoaded(true);
     });
     return () => unsub();
   }, [uid, user]);
@@ -211,11 +217,60 @@ export default function Dashboard({ setTab, cryptos, user }) {
     { Icon: PieChart,  label:"Portfolio", tab:"portfolio" },
   ];
 
+  // Prefer real held assets (sorted by USD value, biggest first). If the
+  // user hasn't bought/swapped anything yet, fall back to the live market
+  // list instead of an empty state — the dashboard should always show a
+  // full asset list, not a hole where one used to be.
+  const heldAssets = (cryptos||[])
+    .map(c => ({ ...c, heldBalance: holdings[c.symbol] || 0 }))
+    .filter(c => c.heldBalance > 0)
+    .sort((a,b) => (b.price*b.heldBalance) - (a.price*a.heldBalance))
+    .slice(0,4);
+  const myAssets = heldAssets.length > 0
+    ? heldAssets
+    : (cryptos||[]).slice(0,4).map(c => ({ ...c, heldBalance: c.balance || 0 }));
+
+  // Real balance trend, reconstructed from the same transactions already
+  // shown in Recent Activity — same sign convention as getTxDisplay's
+  // amountPrefix, so the chart never disagrees with the list below it.
+  // The window's total delta is subtracted from the current (ground-truth)
+  // balance to get a starting point, then each transaction is replayed
+  // forward — so the line always ends exactly on the real balance. Falls
+  // back to the static demo trend for brand-new accounts with too little
+  // history to plot anything meaningful.
+  const balanceHistory = transactions.length < 3 ? CHART_DATA : (() => {
+    const chronological = [...transactions].reverse();
+    const deltas = chronological.map(tx => {
+      const isWithdraw = tx.type === "withdrawal";
+      const isReceive = tx.toUid === uid && !isWithdraw && tx.fromUid !== uid;
+      const amt = tx.amount || 0;
+      return isReceive ? amt : -amt;
+    });
+    const sumDeltas = deltas.reduce((s,d) => s+d, 0);
+    let running = balance - sumDeltas;
+    const points = [running];
+    for (const d of deltas) { running += d; points.push(running); }
+    return points;
+  })();
+
   return (
     <div style={{ opacity:visible?1:0, transition:"opacity 0.4s", display:"flex", flexDirection:"column", gap:20 }}>
 
-      {/* Hero Balance */}
-      <Card hover={false} style={{ background:"linear-gradient(145deg,#0f0f0f 0%,#1a1400 60%,#100d00 100%)", border:`1px solid ${C.borderStrong}`, position:"relative", overflow:"hidden" }}>
+      {/* Hero Balance — subtle cursor-tilt for a bit of depth */}
+      <Reveal delay={0}><Card
+        hover={false}
+        onMouseMove={(e) => {
+          const r = e.currentTarget.getBoundingClientRect();
+          const px = (e.clientX - r.left) / r.width - 0.5;
+          const py = (e.clientY - r.top) / r.height - 0.5;
+          e.currentTarget.style.transition = "transform 0.08s linear";
+          e.currentTarget.style.transform = `perspective(700px) rotateX(${(-py*6).toFixed(2)}deg) rotateY(${(px*6).toFixed(2)}deg) scale(1.012)`;
+        }}
+        onMouseLeave={(e) => {
+          e.currentTarget.style.transition = "transform 0.45s cubic-bezier(0.16,1,0.3,1)";
+          e.currentTarget.style.transform = "perspective(700px) rotateX(0deg) rotateY(0deg) scale(1)";
+        }}
+        style={{ background:"linear-gradient(145deg,#0f0f0f 0%,#1f1005 60%,#140a03 100%)", border:`1px solid ${C.borderStrong}`, position:"relative", overflow:"hidden", transformStyle:"preserve-3d", willChange:"transform" }}>
         {/* Subtle texture: diagonal hairlines */}
         <div style={{
           position:"absolute", inset:0,
@@ -227,7 +282,9 @@ export default function Dashboard({ setTab, cryptos, user }) {
         <div style={{ position:"relative" }}>
           <div style={{ fontSize:11, color:C.muted, letterSpacing:"0.15em", textTransform:"uppercase", marginBottom:8 }}>Total Balance</div>
           <div style={{ fontSize:42, fontWeight:800, color:C.white, letterSpacing:"-0.02em", lineHeight:1 }}>
-            {format(balance)}
+            {walletLoaded
+              ? <>{symbol}<AnimatedNumber value={convert(balance)} decimals={2} /></>
+              : <div style={{ height:42, width:220, borderRadius:8, background:C.bgElevated }} />}
           </div>
           <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginTop:10 }}>
             <div style={{ display:"flex", alignItems:"center", gap:8 }}>
@@ -235,21 +292,22 @@ export default function Dashboard({ setTab, cryptos, user }) {
               <span style={{ color:C.muted, fontSize:12 }}>NOVA Vault {appSettings.currency || "USD"} Wallet</span>
             </div>
             {isAdmin && (
-              <button onClick={() => setShowEditor(true)} style={{ background:`${C.gold}15`, border:`1px solid ${C.gold}40`, borderRadius:8, padding:"5px 14px", color:C.gold, fontSize:11, fontWeight:700, cursor:"pointer" }}>
-                ⚙️ Admin
-              </button>
+              <FeelButton onClick={() => setShowEditor(true)} style={{ background:`${C.gold}15`, border:`1px solid ${C.gold}40`, borderRadius:8, padding:"5px 14px", color:C.gold, fontSize:11, fontWeight:700, cursor:"pointer", display:"flex", alignItems:"center", gap:5 }}>
+                <SettingsIcon size={12} /> Admin
+              </FeelButton>
             )}
           </div>
           <div style={{ marginTop:20 }}>
-            <Sparkline data={CHART_DATA} color={C.gold} height={50} width={300} />
+            <Sparkline data={balanceHistory} color={C.gold} height={50} width={300} />
           </div>
         </div>
-      </Card>
+      </Card></Reveal>
 
       {/* Quick Actions */}
+      <Reveal delay={0.1}>
       <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:10 }}>
         {QUICK_ACTIONS.map(({ Icon, label, tab }) => (
-          <button key={label} onClick={() => setTab(tab)} style={{ background:C.bgElevated, border:`1px solid ${C.border}`, borderRadius:12, padding:"14px 8px", display:"flex", flexDirection:"column", alignItems:"center", gap:8, cursor:"pointer", transition:"all 0.2s" }}
+          <FeelButton key={label} onClick={() => setTab(tab)} style={{ background:C.bgElevated, border:`1px solid ${C.border}`, borderRadius:12, padding:"14px 8px", display:"flex", flexDirection:"column", alignItems:"center", gap:8, cursor:"pointer", transition:"all 0.2s" }}
             onMouseEnter={e => { e.currentTarget.style.borderColor=C.gold; e.currentTarget.style.background=C.bgHover; }}
             onMouseLeave={e => { e.currentTarget.style.borderColor=C.border; e.currentTarget.style.background=C.bgElevated; }}
           >
@@ -257,38 +315,55 @@ export default function Dashboard({ setTab, cryptos, user }) {
               <Icon size={16} strokeWidth={2.25} />
             </div>
             <span style={{ fontSize:11, color:C.mutedLight, fontWeight:600 }}>{label}</span>
-          </button>
+          </FeelButton>
         ))}
       </div>
+      </Reveal>
 
-      {/* Crypto Assets */}
+      {/* Crypto Assets — real holdings when you have them, market list otherwise */}
+      <Reveal delay={0.2}>
       <div>
         <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:12 }}>
           <span style={{ fontSize:14, fontWeight:700, color:C.white }}>My Assets</span>
           <span style={{ fontSize:12, color:C.gold, cursor:"pointer" }} onClick={() => setTab("portfolio")}>View All</span>
         </div>
-        <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
-          {(cryptos||[]).slice(0,4).map(c => (
-            <Card key={c.symbol} style={{ padding:"14px 18px" }}>
-              <div style={{ display:"flex", alignItems:"center", gap:14 }}>
-                <div style={{ width:40, height:40, borderRadius:"50%", background:`${c.color}20`, border:`1px solid ${c.color}40`, display:"flex", alignItems:"center", justifyContent:"center", color:c.color, fontSize:16, fontWeight:800, flexShrink:0 }}>{c.icon}</div>
-                <div style={{ flex:1 }}>
-                  <div style={{ display:"flex", justifyContent:"space-between" }}>
-                    <span style={{ fontSize:14, fontWeight:700, color:C.white }}>{c.symbol}</span>
-                    <span style={{ fontSize:14, fontWeight:700, color:C.white }}>{format(c.price*c.balance)}</span>
-                  </div>
-                  <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginTop:4 }}>
-                    <span style={{ fontSize:12, color:C.muted }}>{format(c.price)}</span>
-                    <PctPill value={c.change} />
+        {!walletLoaded ? (
+          <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
+            <Card hover={false} style={{ padding:0, overflow:"hidden" }}><SkeletonRow /></Card>
+            <Card hover={false} style={{ padding:0, overflow:"hidden" }}><SkeletonRow /></Card>
+          </div>
+        ) : myAssets.length === 0 ? (
+          <Card hover={false} style={{ padding:"28px 16px", textAlign:"center" }}>
+            <div style={{ fontSize:28, marginBottom:6 }}>💼</div>
+            <div style={{ fontSize:13, fontWeight:600, color:C.mutedLight }}>No crypto holdings yet</div>
+            <div style={{ fontSize:11, color:C.muted, marginTop:4 }}>Buy or swap on the Trade screen to see it here</div>
+          </Card>
+        ) : (
+          <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
+            {myAssets.map(c => (
+              <Card key={c.symbol} style={{ padding:"14px 18px" }}>
+                <div style={{ display:"flex", alignItems:"center", gap:14 }}>
+                  <div style={{ width:40, height:40, borderRadius:"50%", background:`${c.color}20`, border:`1px solid ${c.color}40`, display:"flex", alignItems:"center", justifyContent:"center", color:c.color, fontSize:16, fontWeight:800, flexShrink:0 }}>{c.icon}</div>
+                  <div style={{ flex:1 }}>
+                    <div style={{ display:"flex", justifyContent:"space-between" }}>
+                      <span style={{ fontSize:14, fontWeight:700, color:C.white }}>{c.symbol}</span>
+                      <span style={{ fontSize:14, fontWeight:700, color:C.white }}>{format(c.price*c.heldBalance)}</span>
+                    </div>
+                    <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginTop:4 }}>
+                      <span style={{ fontSize:12, color:C.muted }}>{c.heldBalance.toFixed(6)} {c.symbol}</span>
+                      <PctPill value={c.change} />
+                    </div>
                   </div>
                 </div>
-              </div>
-            </Card>
-          ))}
-        </div>
+              </Card>
+            ))}
+          </div>
+        )}
       </div>
+      </Reveal>
 
       {/* Recent Activity — real Firestore */}
+      <Reveal delay={0.3}>
       <div>
         <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:12 }}>
           <span style={{ fontSize:14, fontWeight:700, color:C.white }}>Recent Activity</span>
@@ -312,9 +387,13 @@ export default function Dashboard({ setTab, cryptos, user }) {
           ) : (
             transactions.slice(0,3).map((tx, i) => {
               const { color, Icon, label, amountColor, amountPrefix, statusColor } = getTxDisplay(tx);
+              const isOpen = expandedTxId === tx.id;
               return (
                 <div key={tx.id}>
-                  <div style={{ padding:"14px 18px", display:"flex", alignItems:"center", gap:12 }}>
+                  <div
+                    onClick={() => setExpandedTxId(isOpen ? null : tx.id)}
+                    style={{ padding:"14px 18px", display:"flex", alignItems:"center", gap:12, cursor:"pointer" }}
+                  >
                     <div style={{ width:36, height:36, borderRadius:"50%", flexShrink:0, background:`${color}15`, display:"flex", alignItems:"center", justifyContent:"center", color }}>
                       <Icon size={15} strokeWidth={2.25} />
                     </div>
@@ -330,7 +409,28 @@ export default function Dashboard({ setTab, cryptos, user }) {
                         <Badge color={statusColor}>{tx.status || "pending"}</Badge>
                       </div>
                     </div>
+                    <ChevronDown size={15} color={C.muted} style={{ flexShrink:0, transition:"transform 0.2s", transform:isOpen?"rotate(180deg)":"none" }} />
                   </div>
+                  {isOpen && (
+                    <div style={{ padding:"0 18px 16px", display:"flex", flexDirection:"column", gap:8 }}>
+                      {[
+                        tx.refNumber && ["Reference No.", tx.refNumber],
+                        ["Date", tx.createdAt?.toDate ? tx.createdAt.toDate().toLocaleString("en-US",{dateStyle:"medium",timeStyle:"short"}) : "—"],
+                        tx.note && ["Note", tx.note],
+                      ].filter(Boolean).map(([k,v]) => (
+                        <div key={k} style={{ display:"flex", justifyContent:"space-between", fontSize:11 }}>
+                          <span style={{ color:C.muted }}>{k}</span>
+                          <span style={{ color:C.mutedLight, fontWeight:600, textAlign:"right", maxWidth:"70%", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{v}</span>
+                        </div>
+                      ))}
+                      <FeelButton
+                        onClick={(e) => { e.stopPropagation(); downloadReceipt(tx, uid, user?.email); }}
+                        style={{ marginTop:4, padding:"9px", borderRadius:9, background:`${C.gold}12`, border:`1px solid ${C.gold}35`, color:C.gold, fontSize:11, fontWeight:700, cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", gap:6 }}
+                      >
+                        <FileText size={13} /> Download Receipt (PDF)
+                      </FeelButton>
+                    </div>
+                  )}
                   {i < Math.min(transactions.length,3)-1 && <GoldDivider />}
                 </div>
               );
@@ -338,6 +438,7 @@ export default function Dashboard({ setTab, cryptos, user }) {
           )}
         </Card>
       </div>
+      </Reveal>
 
       {/* Admin modal */}
       {showEditor && (

@@ -1,7 +1,9 @@
 import { useState, useEffect, useRef } from "react";
 import { C } from "../theme";
-import { Card, GoldButton, GoldDivider, Badge } from "../components/UI";
+import { Card, GoldButton, GoldDivider, Badge, FeelButton } from "../components/UI";
+import { Bell, Mail } from "lucide-react";
 import { sendEmail, Emails } from "../notifications";
+import { db, auth, collection, query, where, onSnapshot, addDoc, deleteDoc, updateDoc, doc, serverTimestamp } from "../firebase";
 
 export function ToastContainer({ toasts, onDismiss }) {
   return (
@@ -66,24 +68,37 @@ function AlertRow({ alert, currentPrice, onDelete, onToggle }) {
             <span style={{ fontSize:11, color:C.muted }}>Now: ${currentPrice?.toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2})??"—"}</span>
           </div>
         </div>
-        <button onClick={() => onDelete(alert.id)} style={{ background:"none", border:"none", color:C.muted, cursor:"pointer", fontSize:16, padding:4, flexShrink:0 }}>✕</button>
+        <FeelButton onClick={() => onDelete(alert.id)} style={{ background:"none", border:"none", color:C.muted, cursor:"pointer", fontSize:16, padding:4, flexShrink:0 }}>✕</FeelButton>
       </div>
     </div>
   );
 }
 
 export default function AlertsScreen({ cryptos=[], toasts, setToasts, user }) {
-  const [alerts, setAlerts]       = useState([
-    { id:1, symbol:"BTC", icon:"₿", color:"#F7931A", target:80000, direction:"above", active:true },
-    { id:2, symbol:"ETH", icon:"Ξ", color:"#627EEA", target:2000,  direction:"below", active:true },
-  ]);
+  const [alerts, setAlerts]       = useState([]);
+  const [loading, setLoading]     = useState(true);
   const [showForm, setShowForm]   = useState(false);
   const [selSymbol, setSelSymbol] = useState("BTC");
   const [direction, setDirection] = useState("above");
   const [target, setTarget]       = useState("");
   const firedRef = useRef(new Set());
+  const uid = auth.currentUser?.uid;
 
   const getPriceOf = (symbol) => cryptos.find(c => c.symbol===symbol)?.price ?? null;
+
+  // Live-sync this user's alerts from Firestore so they survive refresh/logout.
+  useEffect(() => {
+    if (!uid) return;
+    const q = query(collection(db, "priceAlerts"), where("uid", "==", uid));
+    const unsub = onSnapshot(q, snap => {
+      const list = [];
+      snap.forEach(d => list.push({ id:d.id, ...d.data() }));
+      list.sort((a,b) => (b.createdAt?.seconds||0) - (a.createdAt?.seconds||0));
+      setAlerts(list);
+      setLoading(false);
+    }, err => { console.error("Alerts load failed:", err); setLoading(false); });
+    return () => unsub();
+  }, [uid]);
 
   useEffect(() => {
     if (!cryptos.length) return;
@@ -111,11 +126,29 @@ export default function AlertsScreen({ cryptos=[], toasts, setToasts, user }) {
     });
   }, [cryptos, alerts]);
 
-  const addAlert = () => {
-    if (!target || isNaN(parseFloat(target))) return;
+  const addAlert = async () => {
+    if (!target || isNaN(parseFloat(target)) || !uid) return;
     const coin = cryptos.find(c => c.symbol===selSymbol) ?? { symbol:selSymbol, icon:"?", color:C.gold };
-    setAlerts(prev => [...prev, { id:Date.now(), symbol:coin.symbol, icon:coin.icon, color:coin.color, target:parseFloat(target), direction, active:true }]);
-    setTarget(""); setShowForm(false);
+    try {
+      await addDoc(collection(db, "priceAlerts"), {
+        uid, symbol:coin.symbol, icon:coin.icon, color:coin.color,
+        target:parseFloat(target), direction, active:true,
+        createdAt: serverTimestamp(),
+      });
+      setTarget(""); setShowForm(false);
+    } catch (e) { console.error("Failed to save alert:", e); }
+  };
+
+  const deleteAlert = async (id) => {
+    setAlerts(prev => prev.filter(a => a.id !== id));
+    try { await deleteDoc(doc(db, "priceAlerts", id)); } catch (e) { console.error("Failed to delete alert:", e); }
+  };
+
+  const toggleAlert = async (id) => {
+    const alert = alerts.find(a => a.id === id);
+    if (!alert) return;
+    setAlerts(prev => prev.map(a => a.id===id ? { ...a, active:!a.active } : a));
+    try { await updateDoc(doc(db, "priceAlerts", id), { active: !alert.active }); } catch (e) { console.error("Failed to update alert:", e); }
   };
 
   const activeCount    = alerts.filter(a => a.active).length;
@@ -151,7 +184,7 @@ export default function AlertsScreen({ cryptos=[], toasts, setToasts, user }) {
             <div style={{ fontSize:11, color:C.muted, letterSpacing:"0.1em", marginBottom:8 }}>ASSET</div>
             <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
               {cryptos.slice(0,5).map(c => (
-                <button key={c.symbol} onClick={() => setSelSymbol(c.symbol)} style={{ padding:"7px 14px", borderRadius:10, cursor:"pointer", background:selSymbol===c.symbol?C.goldGlow:C.bgElevated, border:`1px solid ${selSymbol===c.symbol?C.gold:C.border}`, color:selSymbol===c.symbol?C.gold:C.mutedLight, fontSize:12, fontWeight:700, transition:"all 0.15s" }}>{c.symbol}</button>
+                <FeelButton key={c.symbol} onClick={() => setSelSymbol(c.symbol)} style={{ padding:"7px 14px", borderRadius:10, cursor:"pointer", background:selSymbol===c.symbol?C.goldGlow:C.bgElevated, border:`1px solid ${selSymbol===c.symbol?C.gold:C.border}`, color:selSymbol===c.symbol?C.gold:C.mutedLight, fontSize:12, fontWeight:700, transition:"all 0.15s" }}>{c.symbol}</FeelButton>
               ))}
             </div>
           </div>
@@ -159,7 +192,7 @@ export default function AlertsScreen({ cryptos=[], toasts, setToasts, user }) {
             <div style={{ fontSize:11, color:C.muted, letterSpacing:"0.1em", marginBottom:8 }}>CONDITION</div>
             <div style={{ display:"flex", background:C.bgElevated, borderRadius:10, padding:4, gap:4, border:`1px solid ${C.border}` }}>
               {[["above","▲ Rises Above"],["below","▼ Drops Below"]].map(([d,label]) => (
-                <button key={d} onClick={() => setDirection(d)} style={{ flex:1, padding:"9px", borderRadius:8, border:"none", cursor:"pointer", background:direction===d?(d==="above"?C.green:C.red):"transparent", color:direction===d?"#fff":C.muted, fontWeight:700, fontSize:12, transition:"all 0.2s" }}>{label}</button>
+                <FeelButton key={d} onClick={() => setDirection(d)} style={{ flex:1, padding:"9px", borderRadius:8, border:"none", cursor:"pointer", background:direction===d?(d==="above"?C.green:C.red):"transparent", color:direction===d?"#fff":C.muted, fontWeight:700, fontSize:12, transition:"all 0.2s" }}>{label}</FeelButton>
               ))}
             </div>
           </div>
@@ -175,16 +208,18 @@ export default function AlertsScreen({ cryptos=[], toasts, setToasts, user }) {
             </div>
           </div>
           <div style={{ background:`${C.gold}10`, border:`1px solid ${C.gold}30`, borderRadius:10, padding:"10px 14px" }}>
-            <div style={{ fontSize:11, color:C.gold, fontWeight:600, marginBottom:2 }}>📧 Email alerts enabled</div>
+            <div style={{ fontSize:11, color:C.gold, fontWeight:600, marginBottom:2, display:"flex", alignItems:"center", gap:5 }}><Mail size={12} /> Email alerts enabled</div>
             <div style={{ fontSize:11, color:C.mutedLight }}>You'll receive an email at <span style={{ color:C.gold }}>{user?.email||"your email"}</span> when this alert triggers.</div>
           </div>
-          <GoldButton onClick={addAlert} disabled={!target} style={{ width:"100%", padding:"14px" }}>🔔 Set Alert</GoldButton>
+          <GoldButton onClick={addAlert} disabled={!target} style={{ width:"100%", padding:"14px", display:"flex", alignItems:"center", justifyContent:"center", gap:8 }}><Bell size={16} /> Set Alert</GoldButton>
         </Card>
       )}
 
       <div>
         <div style={{ fontSize:14, fontWeight:700, color:C.white, marginBottom:12 }}>Active Alerts</div>
-        {alerts.length === 0 ? (
+        {loading ? (
+          <div style={{ textAlign:"center", padding:"40px 0", color:C.muted }}>Loading…</div>
+        ) : alerts.length === 0 ? (
           <div style={{ textAlign:"center", padding:"40px 0", color:C.muted }}>
             <div style={{ fontSize:32, marginBottom:12 }}>🔔</div>
             <div>No alerts set yet</div>
@@ -193,7 +228,7 @@ export default function AlertsScreen({ cryptos=[], toasts, setToasts, user }) {
           <Card hover={false} style={{ padding:0, overflow:"hidden" }}>
             {alerts.map((alert,i) => (
               <div key={alert.id}>
-                <AlertRow alert={alert} currentPrice={getPriceOf(alert.symbol)} onDelete={id => setAlerts(p=>p.filter(a=>a.id!==id))} onToggle={id => setAlerts(p=>p.map(a=>a.id===id?{...a,active:!a.active}:a))} />
+                <AlertRow alert={alert} currentPrice={getPriceOf(alert.symbol)} onDelete={deleteAlert} onToggle={toggleAlert} />
                 {i<alerts.length-1 && <GoldDivider margin="0 18px" />}
               </div>
             ))}

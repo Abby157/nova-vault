@@ -1,9 +1,9 @@
 import { useState, useEffect } from "react";
+import { Clock, Mail, CheckCircle2, Paperclip, Lightbulb, TriangleAlert, Lock, Copy, Wallet } from "lucide-react";
 import { C } from "../theme";
-import { Card, GoldButton, GoldDivider, Input } from "../components/UI";
+import { Card, GoldButton, GoldDivider, Input, FeelButton } from "../components/UI";
 import { sendEmail, Emails } from "../notifications";
-import { db, auth, doc, getDoc, setDoc, addDoc, updateDoc, collection, query, where, getDocs, onSnapshot, serverTimestamp, increment } from "../firebase";
-
+import { db, auth, doc, getDoc, collection, query, where, onSnapshot, getDocs, updateDoc, addDoc, increment, serverTimestamp } from "../firebase";
 import { useSettings } from "../hooks/useSettings";
 
 const CURRENCIES = [
@@ -22,35 +22,59 @@ function generateRefNumber() {
 function WithdrawFlow({ cryptos, onBack, user }) {
   const { settings } = useSettings();
   const [userFeeOverride, setUserFeeOverride] = useState(null);
-  const [isFrozen,        setIsFrozen]        = useState(false);
-  const [userPartnerCode, setUserPartnerCode] = useState(null);
-  const [userPartnerId,   setUserPartnerId]   = useState(null);
-
+  const [isFrozen, setIsFrozen] = useState(false);
   const WITHDRAW_WALLET = settings.withdrawWallet;
   const FIXED_FEE = userFeeOverride !== null ? userFeeOverride : settings.withdrawalFee;
-
-  const [step,        setStep]        = useState(1);
+  const [step, setStep]               = useState(1);
   const [selCurrency, setSelCurrency] = useState(CURRENCIES[0]);
-  const [amount,      setAmount]      = useState("");
-  const [amountMode,  setAmountMode]  = useState("crypto");
-  const [destWallet,  setDestWallet]  = useState("");
-  const [txHash,      setTxHash]      = useState("");
-  const [proofName,   setProofName]   = useState("");
-  const [submitted,   setSubmitted]   = useState(false);
-  const [sending,     setSending]     = useState(false);
-  const [copied,      setCopied]      = useState(false);
+  const [amount, setAmount]           = useState("");
+  const [amountMode, setAmountMode]   = useState("crypto"); // "crypto" or "usd"
+  const [destWallet, setDestWallet]   = useState("");
+  const [txHash, setTxHash]           = useState("");
+  const [proofName, setProofName]     = useState("");
+  const [submitted, setSubmitted]     = useState(false);
+  const [sending, setSending]         = useState(false);
+  const [copied, setCopied]           = useState(false);
   const [walletBalance, setWalletBalance] = useState(0);
-  const [refNum,      setRefNum]      = useState("");
+  const [refNum, setRefNum]           = useState("");
 
   const uid         = auth.currentUser?.uid;
+  useEffect(() => {
+  if (!uid) return;
+
+  const loadWithdrawalWallet = async () => {
+    try {
+      const walletSnap = await getDoc(doc(db, "wallets", uid));
+
+      if (walletSnap.exists()) {
+        const data = walletSnap.data();
+
+        setDestWallet(
+          data.withdrawalWallet ||
+          data.walletAddress ||
+          data.address ||
+          ""
+        );
+      }
+    } catch (error) {
+      console.error("Failed to load withdrawal wallet:", error);
+    }
+  };
+
+  loadWithdrawalWallet();
+}, [uid]);
   const cryptoAsset = cryptos.find(c => c.symbol === selCurrency.symbol);
   const price       = cryptoAsset?.price || 1;
 
+  // Let the header back button defer to this flow's own step navigation
   useEffect(() => {
     window.withdrawFlowActive = true;
     window.withdrawFlowBack = () => {
-      if (step > 1) { setStep(s => s - 1); return true; }
-      return false;
+      if (step > 1) {
+        setStep(s => s - 1);
+        return true; // handled internally
+      }
+      return false; // let the normal back happen (exits the flow)
     };
     return () => {
       window.withdrawFlowActive = false;
@@ -58,21 +82,29 @@ function WithdrawFlow({ cryptos, onBack, user }) {
     };
   }, [step]);
 
+  // Normalize amount to crypto units regardless of which mode the user typed in
   const cryptoAmount = amountMode === "usd" && amount
     ? (parseFloat(amount) / price).toFixed(8)
     : amount;
 
-  const usdValue    = cryptoAmount ? (parseFloat(cryptoAmount) * price).toFixed(2) : "0.00";
+  const usdValue = cryptoAmount
+    ? (parseFloat(cryptoAmount) * price).toFixed(2)
+    : "0.00";
+
+  // User receives the FULL withdrawal amount — fee is paid separately, not deducted
   const netReceive  = usdValue;
+
   const walletOk    = destWallet.length >= 32;
   const STEPS       = ["Currency","Amount","Fee","Proof","Status"];
 
+  // USD cost of this withdrawal
   const usdCost = selCurrency.type === "crypto"
     ? parseFloat(cryptoAmount || 0) * price
     : parseFloat(amount || 0);
+
   const isInsufficient = amount && usdCost > walletBalance;
 
-  // Live wallet balance + per-user fee override + frozen status + partnerCode
+  // Live wallet balance + per-user fee override + frozen status
   useEffect(() => {
     if (!uid) return;
     const unsub = onSnapshot(doc(db, "wallets", uid), snap => {
@@ -81,8 +113,6 @@ function WithdrawFlow({ cryptos, onBack, user }) {
         setWalletBalance(data.usdBalance || 0);
         setUserFeeOverride(data.customFee !== undefined ? data.customFee : null);
         setIsFrozen(data.frozen === true);
-        setUserPartnerCode(data.partnerCode || null);
-        setUserPartnerId(data.partnerId || null);
       }
     });
     return () => unsub();
@@ -108,58 +138,46 @@ function WithdrawFlow({ cryptos, onBack, user }) {
       const refNumber = generateRefNumber();
       setRefNum(refNumber);
 
-      // Build withdrawal doc — include partnerCode if user came via partner link
-      const withdrawalData = {
+      await addDoc(collection(db, "withdrawals"), {
         refNumber,
-        uid,
-        userEmail:     user?.email || "",
-        userName:      user?.name  || "User",
-        currency:      selCurrency.symbol,
+        adminId: user?.adminId || null,
+        uid, userEmail: user?.email || "",
+        userName: user?.name || "User",
+        currency: selCurrency.symbol,
         currencyLabel: selCurrency.label,
-        amount:        parseFloat(cryptoAmount),
-        usdValue:      parseFloat(usdValue),
-        fee:           FIXED_FEE,
-        netReceive:    parseFloat(netReceive),
-        destWallet,
-        txHash:        txHash    || "",
-        proofName:     proofName || "",
-        status:        "pending",
-        createdAt:     serverTimestamp(),
-      }
-
-      // Add partnerCode if user belongs to a partner
-      if (userPartnerCode) {
-        withdrawalData.partnerCode = userPartnerCode
-        withdrawalData.partnerId   = userPartnerId
-      }
-
-      await addDoc(collection(db, "withdrawals"), withdrawalData);
-
+        amount: parseFloat(cryptoAmount),
+        usdValue: parseFloat(usdValue),
+        fee: FIXED_FEE,
+        netReceive: parseFloat(netReceive),
+        destWallet, txHash: txHash || "",
+        proofName: proofName || "",
+        status: "pending",
+        createdAt: serverTimestamp(),
+      });
       await addDoc(collection(db, "transactions"), {
         refNumber,
-        fromUid:   uid,
-        fromEmail: user?.email || "",
-        fromName:  user?.name  || "User",
-        toUid:     "external",
-        toEmail:   destWallet,
-        toName:    `Withdraw ${selCurrency.symbol}`,
-        amount:    parseFloat(usdValue),
-        note:      `Withdrawal · ${cryptoAmount} ${selCurrency.symbol} → ${destWallet.slice(0,12)}…`,
-        status:    "pending",
-        type:      "withdrawal",
+        adminId: user?.adminId || null,
+        fromUid: uid, fromEmail: user?.email || "",
+        fromName: user?.name || "User",
+        toUid: "external", toEmail: destWallet,
+        toName: `Withdraw ${selCurrency.symbol}`,
+        amount: parseFloat(usdValue),
+        note: `Withdrawal · ${cryptoAmount} ${selCurrency.symbol} → ${destWallet.slice(0,12)}…`,
+        status: "pending", type: "withdrawal",
         createdAt: serverTimestamp(),
       });
 
+      // Confirmation email to user
       await sendEmail(Emails.withdrawalSubmitted(
         { email: user?.email || "user@novavault.io", name: user?.name || "Valued Customer" },
         cryptoAmount, selCurrency.symbol
       ));
 
+      // Alert email to admin
       await sendEmail(Emails.adminWithdrawalAlert(
         { email: user?.email || "Unknown", name: user?.name || "Unknown User" },
         cryptoAmount, selCurrency.symbol, destWallet
       ));
-
     } catch(e) { console.error(e); }
     setSending(false);
     setSubmitted(true);
@@ -184,27 +202,27 @@ function WithdrawFlow({ cryptos, onBack, user }) {
   if (submitted) return (
     <div style={{ display:"flex", flexDirection:"column", gap:20 }}>
       <div style={{ display:"flex", flexDirection:"column", alignItems:"center", gap:16, paddingTop:20 }}>
-        <div style={{ width:72, height:72, borderRadius:"50%", background:`${C.gold}15`, border:`2px solid ${C.gold}`, display:"flex", alignItems:"center", justifyContent:"center", fontSize:32 }}>⏳</div>
+        <div style={{ width:72, height:72, borderRadius:"50%", background:`${C.gold}15`, border:`2px solid ${C.gold}`, display:"flex", alignItems:"center", justifyContent:"center", color:C.gold }}><Clock size={30} strokeWidth={1.8} /></div>
         <div style={{ textAlign:"center" }}>
           <div style={{ fontSize:20, fontWeight:800, color:C.white }}>Withdrawal Pending</div>
           <div style={{ fontSize:12, color:C.muted, marginTop:6 }}>Under review · Est. 1–3 business days</div>
         </div>
-        <div style={{ background:`${C.green}10`, border:`1px solid ${C.green}30`, borderRadius:10, padding:"10px 16px", textAlign:"center", width:"100%" }}>
-          <div style={{ fontSize:12, color:C.green, fontWeight:600 }}>📧 Confirmation sent to {user?.email}</div>
+        <div style={{ background:`${C.green}10`, border:`1px solid ${C.green}30`, borderRadius:10, padding:"10px 16px", textAlign:"center", width:"100%", display:"flex", alignItems:"center", justifyContent:"center", gap:6 }}>
+          <Mail size={13} color={C.green} /><span style={{ fontSize:12, color:C.green, fontWeight:600 }}>Confirmation sent to {user?.email}</span>
         </div>
       </div>
       <Card hover={false} style={{ padding:"16px 18px" }}>
         {[
-          ["Reference No.",    refNum],
-          ["Status",           "🟡 Pending Review"],
-          ["Currency",         `${selCurrency.label} (${selCurrency.symbol})`],
-          ["Amount Withdrawn", `${cryptoAmount} ${selCurrency.symbol}`],
-          ["USD Value",        `$${usdValue}`],
-          ["Processing Fee",   `$${FIXED_FEE}.00`],
-          ["Your Wallet",      `${destWallet.slice(0,14)}…${destWallet.slice(-6)}`],
-          ["Fee Wallet",       `${WITHDRAW_WALLET.slice(0,16)}…`],
-          ["TX / Proof",       txHash || proofName || "Submitted"],
-          ["Est. Time",        "1–3 business days"],
+          ["Reference No.",       refNum],
+          ["Status",              <span key="status" style={{ display:"inline-flex", alignItems:"center", gap:5 }}><span style={{ width:7, height:7, borderRadius:"50%", background:"#F5C518", display:"inline-block" }} />Pending Review</span>],
+          ["Currency",            `${selCurrency.label} (${selCurrency.symbol})`],
+          ["Amount Withdrawn",    `${cryptoAmount} ${selCurrency.symbol}`],
+          ["USD Value",           `$${usdValue}`],
+          ["Processing Fee",      `$${FIXED_FEE}.00`],
+          ["Your Wallet",         `${destWallet.slice(0,14)}…${destWallet.slice(-6)}`],
+          ["Fee Wallet",          `${WITHDRAW_WALLET.slice(0,16)}…`],
+          ["TX / Proof",          txHash || proofName || "Submitted"],
+          ["Est. Time",           "1–3 business days"],
         ].map(([label,value],i,arr) => (
           <div key={label}>
             <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", padding:"7px 0" }}>
@@ -232,7 +250,7 @@ function WithdrawFlow({ cryptos, onBack, user }) {
         <div style={{ display:"flex", flexDirection:"column", gap:16 }}>
           {isFrozen && (
             <div style={{ background:`${C.red}15`, border:`1px solid ${C.red}40`, borderRadius:12, padding:"14px 16px" }}>
-              <div style={{ fontSize:13, fontWeight:700, color:C.red, marginBottom:4 }}>🔒 Account Frozen</div>
+              <div style={{ fontSize:13, fontWeight:700, color:C.red, marginBottom:4, display:"flex", alignItems:"center", gap:6 }}><Lock size={13} /> Account Frozen</div>
               <div style={{ fontSize:12, color:C.mutedLight }}>Your account has been temporarily suspended. Contact support for assistance.</div>
             </div>
           )}
@@ -240,10 +258,13 @@ function WithdrawFlow({ cryptos, onBack, user }) {
             <div style={{ fontSize:17, fontWeight:800, color:C.white }}>Withdraw Funds</div>
             <div style={{ fontSize:12, color:C.muted, marginTop:4 }}>Choose what you want to withdraw</div>
           </div>
+
+          {/* Show wallet balance at top */}
           <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", background:C.bgElevated, border:`1px solid ${C.border}`, borderRadius:10, padding:"10px 16px" }}>
             <span style={{ fontSize:12, color:C.muted }}>Your Wallet Balance</span>
             <span style={{ fontSize:14, fontWeight:800, color:C.white }}>${walletBalance.toLocaleString("en-US",{minimumFractionDigits:2})}</span>
           </div>
+
           <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
             {CURRENCIES.map(c => {
               const isSel = selCurrency.symbol === c.symbol;
@@ -262,7 +283,7 @@ function WithdrawFlow({ cryptos, onBack, user }) {
               );
             })}
           </div>
-          <GoldButton onClick={()=>setStep(2)} disabled={isFrozen} style={{ width:"100%", padding:"15px" }}>{isFrozen?"🔒 Account Frozen":"Continue →"}</GoldButton>
+          <GoldButton onClick={()=>setStep(2)} disabled={isFrozen} style={{ width:"100%", padding:"15px", display:"flex", alignItems:"center", justifyContent:"center", gap:8 }}>{isFrozen ? <><Lock size={15} /> Account Frozen</> : "Continue →"}</GoldButton>
         </div>
       )}
 
@@ -273,10 +294,15 @@ function WithdrawFlow({ cryptos, onBack, user }) {
             <div style={{ fontSize:17, fontWeight:800, color:C.white }}>Amount & Destination</div>
             <div style={{ fontSize:12, color:C.muted, marginTop:4 }}>Enter amount and your destination wallet</div>
           </div>
+
+          {/* Destination wallet */}
           <div>
             <label style={{ fontSize:11, color:C.muted, letterSpacing:"0.1em", display:"block", marginBottom:8 }}>DESTINATION WALLET ADDRESS</label>
-            <input value={destWallet} onChange={e=>setDestWallet(e.target.value)} placeholder={`Your ${selCurrency.symbol} wallet address`}
-              style={{ width:"100%", background:C.bgElevated, border:`1px solid ${walletOk?C.green:destWallet.length>0?C.gold:C.border}`, borderRadius:12, padding:"14px 16px", color:C.white, fontSize:12, outline:"none", boxSizing:"border-box", fontFamily:"monospace", transition:"border-color 0.2s" }} />
+            <input
+              value={destWallet} onChange={e=>setDestWallet(e.target.value)}
+              placeholder={`Your ${selCurrency.symbol} wallet address`}
+              style={{ width:"100%", background:C.bgElevated, border:`1px solid ${walletOk?C.green:destWallet.length>0?C.gold:C.border}`, borderRadius:12, padding:"14px 16px", color:C.white, fontSize:12, outline:"none", boxSizing:"border-box", fontFamily:"monospace", transition:"border-color 0.2s" }}
+            />
             {walletOk && (
               <div style={{ marginTop:6, display:"flex", alignItems:"center", gap:6 }}>
                 <div style={{ width:6, height:6, borderRadius:"50%", background:C.green, boxShadow:`0 0 6px ${C.green}` }} />
@@ -289,12 +315,15 @@ function WithdrawFlow({ cryptos, onBack, user }) {
                 <span style={{ fontSize:11, color:C.mutedLight }}>{32-destWallet.length} more characters needed</span>
               </div>
             )}
-            <div style={{ marginTop:10, background:`${C.gold}08`, border:`1px solid ${C.gold}20`, borderRadius:10, padding:"10px 14px" }}>
+            <div style={{ marginTop:10, background:`${C.gold}08`, border:`1px solid ${C.gold}20`, borderRadius:10, padding:"10px 14px", display:"flex", gap:8 }}>
+              <TriangleAlert size={14} color={C.gold} style={{ flexShrink:0, marginTop:2 }} />
               <div style={{ fontSize:11, color:C.mutedLight, lineHeight:1.7 }}>
-                ⚠️ Double-check this address. Funds sent to a wrong address <span style={{ color:C.red, fontWeight:700 }}>cannot be recovered</span>.
+                Double-check this address. Funds sent to a wrong address <span style={{ color:C.red, fontWeight:700 }}>cannot be recovered</span>.
               </div>
             </div>
           </div>
+
+          {/* Asset row */}
           <div style={{ display:"flex", alignItems:"center", gap:10, background:C.bgElevated, border:`1px solid ${C.border}`, borderRadius:12, padding:"12px 16px" }}>
             <span style={{ color:selCurrency.color, fontWeight:800, fontSize:20 }}>{selCurrency.icon}</span>
             <span style={{ fontSize:14, fontWeight:700, color:C.white }}>{selCurrency.label}</span>
@@ -302,59 +331,91 @@ function WithdrawFlow({ cryptos, onBack, user }) {
               <span style={{ marginLeft:"auto", fontSize:12, color:C.muted }}>≈ ${cryptoAsset.price.toLocaleString()}/coin</span>
             )}
           </div>
+
+          {/* Amount */}
           <div>
             <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:8 }}>
               <label style={{ fontSize:11, color:C.muted, letterSpacing:"0.1em" }}>AMOUNT</label>
               {selCurrency.type==="crypto" && (
                 <div style={{ display:"flex", gap:4, background:C.bgElevated, borderRadius:8, padding:3 }}>
-                  <button onClick={()=>{ setAmountMode("crypto"); setAmount(""); }} style={{ padding:"4px 10px", borderRadius:6, fontSize:11, fontWeight:700, cursor:"pointer", background:amountMode==="crypto"?C.gold:"transparent", color:amountMode==="crypto"?"#000":C.muted, border:"none" }}>{selCurrency.symbol}</button>
-                  <button onClick={()=>{ setAmountMode("usd"); setAmount(""); }} style={{ padding:"4px 10px", borderRadius:6, fontSize:11, fontWeight:700, cursor:"pointer", background:amountMode==="usd"?C.gold:"transparent", color:amountMode==="usd"?"#000":C.muted, border:"none" }}>USD</button>
+                  <FeelButton onClick={()=>{ setAmountMode("crypto"); setAmount(""); }} style={{ padding:"4px 10px", borderRadius:6, fontSize:11, fontWeight:700, cursor:"pointer", background:amountMode==="crypto"?C.gold:"transparent", color:amountMode==="crypto"?"#000":C.muted, border:"none" }}>{selCurrency.symbol}</FeelButton>
+                  <FeelButton onClick={()=>{ setAmountMode("usd"); setAmount(""); }} style={{ padding:"4px 10px", borderRadius:6, fontSize:11, fontWeight:700, cursor:"pointer", background:amountMode==="usd"?C.gold:"transparent", color:amountMode==="usd"?"#000":C.muted, border:"none" }}>USD</FeelButton>
                 </div>
               )}
             </div>
             <div style={{ position:"relative" }}>
-              {amountMode==="usd" && <span style={{ position:"absolute", left:16, top:"50%", transform:"translateY(-50%)", color:C.gold, fontWeight:700, fontSize:20 }}>$</span>}
-              <input value={amount} onChange={e=>setAmount(e.target.value)} placeholder="0.00" type="number"
-                style={{ width:"100%", background:C.bgElevated, border:`1px solid ${isInsufficient?C.red:C.border}`, borderRadius:12, padding:amountMode==="usd"?"16px 80px 16px 32px":"16px 80px 16px 16px", color:C.white, fontSize:22, fontWeight:700, outline:"none", boxSizing:"border-box", transition:"border-color 0.2s" }} />
+              {amountMode==="usd" && (
+                <span style={{ position:"absolute", left:16, top:"50%", transform:"translateY(-50%)", color:C.gold, fontWeight:700, fontSize:20 }}>$</span>
+              )}
+              <input
+                value={amount}
+                onChange={e=>setAmount(e.target.value)}
+                placeholder="0.00"
+                type="number"
+                style={{ width:"100%", background:C.bgElevated, border:`1px solid ${isInsufficient?C.red:C.border}`, borderRadius:12, padding:amountMode==="usd"?"16px 80px 16px 32px":"16px 80px 16px 16px", color:C.white, fontSize:22, fontWeight:700, outline:"none", boxSizing:"border-box", transition:"border-color 0.2s" }}
+              />
               <span style={{ position:"absolute", right:16, top:"50%", transform:"translateY(-50%)", color:C.gold, fontSize:13, fontWeight:700 }}>{amountMode==="usd" ? "USD" : selCurrency.symbol}</span>
             </div>
             {amount && selCurrency.type==="crypto" && (
               <div style={{ fontSize:12, color:C.muted, marginTop:6 }}>
-                {amountMode==="usd" ? `≈ ${cryptoAmount} ${selCurrency.symbol}` : `≈ $${usdValue} USD`}
+                {amountMode==="usd"
+                  ? `≈ ${cryptoAmount} ${selCurrency.symbol}`
+                  : `≈ $${usdValue} USD`}
               </div>
             )}
+
+            {/* Live balance indicator */}
             <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginTop:8 }}>
               <span style={{ fontSize:11, color:C.muted }}>Your wallet balance</span>
-              <span style={{ fontSize:12, fontWeight:700, color:isInsufficient?C.red:C.green }}>${walletBalance.toLocaleString("en-US",{minimumFractionDigits:2})}</span>
+              <span style={{ fontSize:12, fontWeight:700, color:isInsufficient?C.red:C.green }}>
+                ${walletBalance.toLocaleString("en-US",{minimumFractionDigits:2})}
+              </span>
             </div>
+
+            {/* Insufficient funds error */}
             {isInsufficient && (
               <div style={{ marginTop:8, padding:"10px 14px", borderRadius:10, background:`${C.red}15`, border:`1px solid ${C.red}40`, color:C.red, fontSize:13, fontWeight:600 }}>
                 ⚠️ Insufficient funds. Your balance is ${walletBalance.toLocaleString("en-US",{minimumFractionDigits:2})}
               </div>
             )}
           </div>
+
+          {/* % shortcuts — crypto only */}
           {selCurrency.type==="crypto" && cryptoAsset && (
             <div style={{ display:"flex", gap:8 }}>
               {[25,50,75,100].map(pct => (
-                <button key={pct} onClick={()=>{ setAmountMode("crypto"); setAmount((cryptoAsset.balance*pct/100).toFixed(4)); }} style={{ flex:1, padding:"7px", borderRadius:8, cursor:"pointer", background:C.bgElevated, border:`1px solid ${C.border}`, color:C.mutedLight, fontSize:11, fontWeight:600 }}>{pct}%</button>
+                <FeelButton key={pct} onClick={()=>{
+                  setAmountMode("crypto");
+                  setAmount((cryptoAsset.balance*pct/100).toFixed(4));
+                }} style={{ flex:1, padding:"7px", borderRadius:8, cursor:"pointer", background:C.bgElevated, border:`1px solid ${C.border}`, color:C.mutedLight, fontSize:11, fontWeight:600 }}>{pct}%</FeelButton>
               ))}
             </div>
           )}
+
+          {/* Max button for fiat */}
           {selCurrency.type==="fiat" && walletBalance > 0 && (
-            <button onClick={()=>setAmount(walletBalance.toFixed(2))} style={{ padding:"8px", borderRadius:8, cursor:"pointer", background:C.bgElevated, border:`1px solid ${C.border}`, color:C.gold, fontSize:12, fontWeight:700 }}>
+            <FeelButton onClick={()=>setAmount(walletBalance.toFixed(2))} style={{ padding:"8px", borderRadius:8, cursor:"pointer", background:C.bgElevated, border:`1px solid ${C.border}`, color:C.gold, fontSize:12, fontWeight:700 }}>
               Use Max — ${walletBalance.toLocaleString("en-US",{minimumFractionDigits:2})}
-            </button>
+            </FeelButton>
           )}
+
           <div style={{ display:"flex", gap:10 }}>
             <GoldButton variant="outline" onClick={()=>setStep(1)} style={{ flex:1 }}>Back</GoldButton>
-            <GoldButton onClick={()=>{ if (isFrozen || !amount || parseFloat(amount)<=0 || !walletOk || isInsufficient) return; setStep(3); }} disabled={isFrozen || !amount || parseFloat(amount)<=0 || !walletOk || !!isInsufficient} style={{ flex:1 }}>
-              {isFrozen ? "🔒 Account Frozen" : "Continue →"}
+            <GoldButton
+              onClick={()=>{
+                if (isFrozen || !amount || parseFloat(amount)<=0 || !walletOk || isInsufficient) return;
+                setStep(3);
+              }}
+              disabled={isFrozen || !amount || parseFloat(amount)<=0 || !walletOk || !!isInsufficient}
+              style={{ flex:1, display:"flex", alignItems:"center", justifyContent:"center", gap:8 }}
+            >
+              {isFrozen ? <><Lock size={15} /> Account Frozen</> : "Continue →"}
             </GoldButton>
           </div>
         </div>
       )}
 
-      {/* STEP 3 — Fee */}
+      {/* STEP 3 — Fee (separate from withdrawal amount) */}
       {step===3 && (
         <div style={{ display:"flex", flexDirection:"column", gap:16 }}>
           <div>
@@ -362,18 +423,18 @@ function WithdrawFlow({ cryptos, onBack, user }) {
             <div style={{ fontSize:12, color:C.muted, marginTop:4 }}>Pay the network fee to proceed</div>
           </div>
           <div style={{ background:`${C.red}10`, border:`1px solid ${C.red}30`, borderRadius:12, padding:"14px 16px" }}>
-            <div style={{ fontSize:13, fontWeight:700, color:C.red, marginBottom:6 }}>⚠️ Network Fee Required</div>
+            <div style={{ fontSize:13, fontWeight:700, color:C.red, marginBottom:6, display:"flex", alignItems:"center", gap:6 }}><TriangleAlert size={14} /> Network Fee Required</div>
             <div style={{ fontSize:12, color:C.mutedLight, lineHeight:1.7 }}>
               A processing fee of <span style={{ color:C.gold, fontWeight:800, fontSize:16 }}>${FIXED_FEE}.00</span> is required to authorize this withdrawal.
             </div>
           </div>
           <Card hover={false} style={{ padding:"16px 18px" }}>
             {[
-              ["Asset",          `${selCurrency.label} (${selCurrency.symbol})`],
-              ["Amount",         `${cryptoAmount} ${selCurrency.symbol}`],
-              ["You Receive",    `$${usdValue}`],
-              ["Processing Fee", `$${FIXED_FEE}.00`],
-              ["Withdraw To",    `${destWallet.slice(0,14)}…${destWallet.slice(-6)}`],
+              ["Asset",            `${selCurrency.label} (${selCurrency.symbol})`],
+              ["Amount",           `${cryptoAmount} ${selCurrency.symbol}`],
+              ["You Receive",      `$${usdValue}`],
+              ["Processing Fee",   `$${FIXED_FEE}.00`],
+              ["Withdraw To",      `${destWallet.slice(0,14)}…${destWallet.slice(-6)}`],
             ].map(([label,value],i,arr) => (
               <div key={label}>
                 <div style={{ display:"flex", justifyContent:"space-between", padding:"8px 0" }}>
@@ -389,9 +450,9 @@ function WithdrawFlow({ cryptos, onBack, user }) {
             <div style={{ background:C.bgElevated, border:`1px solid ${C.borderStrong}`, borderRadius:12, padding:"16px" }}>
               <div style={{ fontSize:10, color:C.gold, letterSpacing:"0.1em", marginBottom:8, textTransform:"uppercase" }}>Payment Wallet Address</div>
               <div style={{ fontFamily:"monospace", fontSize:13, color:C.white, wordBreak:"break-all", lineHeight:1.8, userSelect:"all" }}>{WITHDRAW_WALLET}</div>
-              <button onClick={copyWallet} style={{ marginTop:12, borderRadius:10, padding:"11px 14px", background:copied?`${C.green}20`:`${C.gold}15`, border:`1px solid ${copied?C.green:C.gold}40`, color:copied?C.green:C.gold, fontSize:12, fontWeight:700, cursor:"pointer", width:"100%", transition:"all 0.3s" }}>
-                {copied?"✓ Copied to clipboard!":"📋 Copy Wallet Address"}
-              </button>
+              <FeelButton onClick={copyWallet} style={{ marginTop:12, borderRadius:10, padding:"11px 14px", background:copied?`${C.green}20`:`${C.gold}15`, border:`1px solid ${copied?C.green:C.gold}40`, color:copied?C.green:C.gold, fontSize:12, fontWeight:700, cursor:"pointer", width:"100%", transition:"all 0.3s", display:"flex", alignItems:"center", justifyContent:"center", gap:7 }}>
+                {copied ? <>✓ Copied to clipboard!</> : <><Copy size={13} /> Copy Wallet Address</>}
+              </FeelButton>
             </div>
           </div>
           <div style={{ display:"flex", gap:10 }}>
@@ -422,20 +483,20 @@ function WithdrawFlow({ cryptos, onBack, user }) {
             <input type="file" accept="image/*,.pdf" style={{ display:"none" }} onChange={e=>setProofName(e.target.files?.[0]?.name||"")} />
             {proofName ? (
               <>
-                <div style={{ fontSize:28, marginBottom:8 }}>✅</div>
+                <div style={{ marginBottom:8, color:C.gold, display:"flex", justifyContent:"center" }}><CheckCircle2 size={26} strokeWidth={1.8} /></div>
                 <div style={{ fontSize:12, color:C.gold, fontWeight:700 }}>{proofName}</div>
                 <div style={{ fontSize:11, color:C.muted, marginTop:4 }}>Tap to change</div>
               </>
             ) : (
               <>
-                <div style={{ fontSize:32, marginBottom:8 }}>📎</div>
+                <div style={{ marginBottom:8, color:C.mutedLight, display:"flex", justifyContent:"center" }}><Paperclip size={30} strokeWidth={1.6} /></div>
                 <div style={{ fontSize:13, color:C.mutedLight, fontWeight:600 }}>Upload Screenshot / PDF</div>
                 <div style={{ fontSize:11, color:C.muted, marginTop:4 }}>PNG, JPG or PDF</div>
               </>
             )}
           </label>
           <div style={{ background:`${C.gold}10`, border:`1px solid ${C.gold}30`, borderRadius:12, padding:"12px 16px" }}>
-            <div style={{ fontSize:11, color:C.gold, fontWeight:700, marginBottom:4 }}>💡 Tip</div>
+            <div style={{ fontSize:11, color:C.gold, fontWeight:700, marginBottom:4, display:"flex", alignItems:"center", gap:5 }}><Lightbulb size={13} /> Tip</div>
             <div style={{ fontSize:11, color:C.mutedLight, lineHeight:1.7 }}>Providing both a TX hash AND a screenshot gives the fastest processing time.</div>
           </div>
           <div style={{ display:"flex", gap:10 }}>
@@ -452,21 +513,22 @@ function WithdrawFlow({ cryptos, onBack, user }) {
 
 // ── Main SendReceive ──────────────────────────────────────────────
 export default function SendReceive({ cryptos=[], user }) {
-  const [mode,          setMode]          = useState("send");
-  const [toEmail,       setToEmail]       = useState("");
-  const [amount,        setAmount]        = useState("");
-  const [note,          setNote]          = useState("");
-  const [step,          setStep]          = useState(1);
-  const [showWithdraw,  setShowWithdraw]  = useState(false);
-  const [loading,       setLoading]       = useState(false);
-  const [error,         setError]         = useState("");
-  const [success,       setSuccess]       = useState(false);
+  const [mode, setMode]                 = useState("send");
+  const [toEmail, setToEmail]           = useState("");
+  const [amount, setAmount]             = useState("");
+  const [note, setNote]                 = useState("");
+  const [step, setStep]                 = useState(1);
+  const [showWithdraw, setShowWithdraw] = useState(false);
+  const [loading, setLoading]           = useState(false);
+  const [error, setError]               = useState("");
+  const [success, setSuccess]           = useState(false);
   const [senderBalance, setSenderBalance] = useState(0);
-  const [isFrozen,      setIsFrozen]      = useState(false);
-  const [refNum,        setRefNum]        = useState("");
+  const [isFrozen, setIsFrozen]         = useState(false);
+  const [refNum, setRefNum]             = useState("");
 
   const uid = auth.currentUser?.uid;
 
+  // Live balance + frozen status
   useEffect(() => {
     if (!uid) return;
     const unsub = onSnapshot(doc(db, "wallets", uid), snap => {
@@ -480,15 +542,17 @@ export default function SendReceive({ cryptos=[], user }) {
 
   const handleSend = async () => {
     if (isFrozen) { setError("🔒 Your account has been frozen. Contact support."); return; }
+
     if (step === 1) {
-      if (!toEmail || !amount)     { setError("Please fill all fields."); return; }
-      if (parseFloat(amount) <= 0) { setError("Enter a valid amount."); return; }
+      if (!toEmail || !amount)       { setError("Please fill all fields."); return; }
+      if (parseFloat(amount) <= 0)   { setError("Enter a valid amount."); return; }
       if (parseFloat(amount) > senderBalance) {
         setError(`⚠ Insufficient funds. Your balance is $${senderBalance.toLocaleString("en-US",{minimumFractionDigits:2})}`);
         return;
       }
       setError(""); setStep(2); return;
     }
+
     if (step === 2) {
       setLoading(true); setError("");
       try {
@@ -500,13 +564,17 @@ export default function SendReceive({ cryptos=[], user }) {
         const recipientData = recipientDoc.data();
         const sendAmount    = parseFloat(amount);
         if (recipientUid === uid) { setError("You can't send to yourself."); setLoading(false); return; }
+
+        // Double-check balance before deducting
         if (sendAmount > senderBalance) {
           setError(`⚠️ Insufficient funds. Your balance is $${senderBalance.toLocaleString("en-US",{minimumFractionDigits:2})}`);
           setLoading(false); return;
         }
+
         const refNumber = generateRefNumber();
         setRefNum(refNumber);
-        await updateDoc(doc(db,"wallets",uid),          { usdBalance: increment(-sendAmount) });
+
+        await updateDoc(doc(db,"wallets",uid),         { usdBalance: increment(-sendAmount) });
         await updateDoc(doc(db,"wallets",recipientUid), { usdBalance: increment(sendAmount)  });
         await addDoc(collection(db,"transactions"), {
           refNumber,
@@ -517,7 +585,7 @@ export default function SendReceive({ cryptos=[], user }) {
           status:"completed", type:"send", createdAt: serverTimestamp(),
         });
         setLoading(false); setSuccess(true);
-      } catch(err) {
+      } catch {
         setLoading(false); setError("Transfer failed. Please try again.");
       }
     }
@@ -560,13 +628,15 @@ export default function SendReceive({ cryptos=[], user }) {
     <div style={{ display:"flex", flexDirection:"column", gap:20 }}>
       {isFrozen && (
         <div style={{ background:`${C.red}15`, border:`1px solid ${C.red}40`, borderRadius:12, padding:"14px 16px" }}>
-          <div style={{ fontSize:13, fontWeight:700, color:C.red, marginBottom:4 }}>🔒 Account Frozen</div>
+          <div style={{ fontSize:13, fontWeight:700, color:C.red, marginBottom:4, display:"flex", alignItems:"center", gap:6 }}><Lock size={13} /> Account Frozen</div>
           <div style={{ fontSize:12, color:C.mutedLight }}>Your account has been temporarily suspended. Contact support for assistance.</div>
         </div>
       )}
+
+      {/* Mode tabs */}
       <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:8 }}>
         {[["send","↑ Send"],["receive","↓ Receive"],["withdraw","↓ Withdraw"]].map(([m,label]) => (
-          <button key={m} onClick={()=>{ setMode(m); if(m==="withdraw") setShowWithdraw(true); }} style={{ padding:"11px 6px", borderRadius:10, cursor:"pointer", fontWeight:700, fontSize:12, transition:"all 0.2s", background:mode===m?(m==="withdraw"?`${C.red}15`:C.goldGlow):C.bgElevated, border:`1px solid ${mode===m?(m==="withdraw"?C.red:C.gold):C.border}`, color:mode===m?(m==="withdraw"?C.red:C.gold):C.muted }}>{label}</button>
+          <FeelButton key={m} onClick={()=>{ setMode(m); if(m==="withdraw") setShowWithdraw(true); }} style={{ padding:"11px 6px", borderRadius:10, cursor:"pointer", fontWeight:700, fontSize:12, transition:"all 0.2s", background:mode===m?(m==="withdraw"?`${C.red}15`:C.goldGlow):C.bgElevated, border:`1px solid ${mode===m?(m==="withdraw"?C.red:C.gold):C.border}`, color:mode===m?(m==="withdraw"?C.red:C.gold):C.muted }}>{label}</FeelButton>
         ))}
       </div>
 
@@ -577,9 +647,11 @@ export default function SendReceive({ cryptos=[], user }) {
             <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
               <div>
                 <div style={{ fontSize:11, color:C.muted, letterSpacing:"0.1em" }}>YOUR BALANCE</div>
-                <div style={{ fontSize:26, fontWeight:800, color:C.white, marginTop:4 }}>${senderBalance.toLocaleString("en-US",{minimumFractionDigits:2})}</div>
+                <div style={{ fontSize:26, fontWeight:800, color:C.white, marginTop:4 }}>
+                  ${senderBalance.toLocaleString("en-US",{minimumFractionDigits:2})}
+                </div>
               </div>
-              <div style={{ fontSize:32 }}>💵</div>
+              <div style={{ color:C.gold }}><Wallet size={30} strokeWidth={1.7} /></div>
             </div>
           </Card>
 
@@ -600,27 +672,38 @@ export default function SendReceive({ cryptos=[], user }) {
                   <input value={amount} onChange={e=>setAmount(e.target.value)} placeholder="0.00" type="number"
                     style={{ width:"100%", background:C.bgElevated, border:`1px solid ${amount&&parseFloat(amount)>senderBalance?C.red:C.border}`, borderRadius:12, padding:"14px 16px 14px 36px", color:C.white, fontSize:22, fontWeight:700, outline:"none", boxSizing:"border-box", transition:"border-color 0.2s" }} />
                 </div>
+
+                {/* Live balance indicator */}
                 {amount && (
                   <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginTop:8 }}>
                     <span style={{ fontSize:11, color:C.muted }}>Available balance</span>
-                    <span style={{ fontSize:12, fontWeight:700, color:parseFloat(amount)>senderBalance?C.red:C.green }}>${senderBalance.toLocaleString("en-US",{minimumFractionDigits:2})}</span>
+                    <span style={{ fontSize:12, fontWeight:700, color:parseFloat(amount)>senderBalance?C.red:C.green }}>
+                      ${senderBalance.toLocaleString("en-US",{minimumFractionDigits:2})}
+                    </span>
                   </div>
                 )}
+
+                {/* Insufficient funds */}
                 {amount && parseFloat(amount) > senderBalance && (
                   <div style={{ marginTop:8, padding:"10px 14px", borderRadius:10, background:`${C.red}15`, border:`1px solid ${C.red}40`, color:C.red, fontSize:13, fontWeight:600 }}>
                     ⚠️ Insufficient funds. Your balance is ${senderBalance.toLocaleString("en-US",{minimumFractionDigits:2})}
                   </div>
                 )}
+
                 <div style={{ display:"flex", gap:8, marginTop:10 }}>
                   {[25,50,75,100].map(pct => (
-                    <button key={pct} onClick={()=>setAmount((senderBalance*pct/100).toFixed(2))} style={{ flex:1, padding:"6px", borderRadius:8, cursor:"pointer", background:C.bgElevated, border:`1px solid ${C.border}`, color:C.mutedLight, fontSize:11, fontWeight:600 }}>{pct}%</button>
+                    <FeelButton key={pct} onClick={()=>setAmount((senderBalance*pct/100).toFixed(2))} style={{ flex:1, padding:"6px", borderRadius:8, cursor:"pointer", background:C.bgElevated, border:`1px solid ${C.border}`, color:C.mutedLight, fontSize:11, fontWeight:600 }}>{pct}%</FeelButton>
                   ))}
                 </div>
               </div>
               <Input label="NOTE (OPTIONAL)" placeholder="e.g. Payment for services" value={note} onChange={e=>setNote(e.target.value)} />
               {error && <div style={{ padding:"10px 14px", borderRadius:10, background:`${C.red}15`, border:`1px solid ${C.red}40`, color:C.red, fontSize:13, fontWeight:600 }}>{error}</div>}
-              <GoldButton onClick={handleSend} disabled={isFrozen || !toEmail || !amount || parseFloat(amount)<=0 || parseFloat(amount)>senderBalance} style={{ width:"100%", padding:"16px" }}>
-                {isFrozen ? "🔒 Account Frozen" : "Review Transfer →"}
+              <GoldButton
+                onClick={handleSend}
+                disabled={isFrozen || !toEmail || !amount || parseFloat(amount)<=0 || parseFloat(amount)>senderBalance}
+                style={{ width:"100%", padding:"16px", display:"flex", alignItems:"center", justifyContent:"center", gap:8 }}
+              >
+                {isFrozen ? <><Lock size={15} /> Account Frozen</> : "Review Transfer →"}
               </GoldButton>
             </div>
           )}
@@ -671,7 +754,7 @@ export default function SendReceive({ cryptos=[], user }) {
               Share your email so others can send you money instantly inside NOVA Vault. Transfers are free and instant.
             </div>
           </div>
-          <GoldButton onClick={()=>navigator.clipboard?.writeText(user?.email||"")} style={{ width:"100%" }}>📋 Copy My Email</GoldButton>
+          <GoldButton onClick={()=>navigator.clipboard?.writeText(user?.email||"")} style={{ width:"100%", display:"flex", alignItems:"center", justifyContent:"center", gap:8 }}><Copy size={15} /> Copy My Email</GoldButton>
         </div>
       )}
     </div>

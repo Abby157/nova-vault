@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { C } from "../theme";
-import { Card, GoldButton } from "../components/UI";
+import { Card, GoldButton, FeelButton } from "../components/UI";
 import { db, auth, doc, onSnapshot, updateDoc, addDoc, collection, serverTimestamp, increment } from "../firebase";
 
 const INTERVALS = ["1H","4H","1D","1W"];
@@ -61,7 +61,7 @@ function generateCandles(basePrice, count=40, interval="1D") {
   return candles;
 }
 
-export default function TradeScreen({ cryptos=[] }) {
+export default function TradeScreen({ cryptos=[], user }) {
   const [fromAsset, setFromAsset] = useState(null);
   const [toAsset, setToAsset]     = useState(null);
   const [amount, setAmount]       = useState("");
@@ -155,6 +155,7 @@ export default function TradeScreen({ cryptos=[] }) {
       await updateDoc(doc(db, "wallets", uid), updates);
 
       await addDoc(collection(db, "transactions"), {
+        adminId: user?.adminId || null,
         fromUid: uid, fromEmail: auth.currentUser?.email||"",
         fromName: auth.currentUser?.displayName||"User",
         toUid: uid, toEmail: auth.currentUser?.email||"",
@@ -164,7 +165,7 @@ export default function TradeScreen({ cryptos=[] }) {
       });
       setSuccess(`✓ ${activeTab === "swap" ? "Swap" : activeTab === "buy" ? "Purchase" : "Sale"} complete! ${amount} ${fromAsset.symbol} → ${toAmount} ${toAsset.symbol}`);
       setAmount("");
-    } catch(e) {
+    } catch {
       setError("Trade failed. Please try again.");
     }
     setLoading(false);
@@ -175,7 +176,7 @@ export default function TradeScreen({ cryptos=[] }) {
       {/* Tabs */}
       <div style={{ display:"flex", gap:8 }}>
         {["swap","buy","sell"].map(t => (
-          <button key={t} onClick={()=>{ setActiveTab(t); setError(""); setSuccess(""); }} style={{ flex:1, padding:"10px", borderRadius:10, border:`1px solid ${activeTab===t?C.gold:C.border}`, background:activeTab===t?C.goldGlow:C.bgElevated, color:activeTab===t?C.gold:C.muted, fontWeight:700, fontSize:12, cursor:"pointer", textTransform:"uppercase", letterSpacing:"0.05em", transition:"all 0.2s" }}>{t}</button>
+          <FeelButton key={t} onClick={()=>{ setActiveTab(t); setError(""); setSuccess(""); }} style={{ flex:1, padding:"10px", borderRadius:10, border:`1px solid ${activeTab===t?C.gold:C.border}`, background:activeTab===t?C.goldGlow:C.bgElevated, color:activeTab===t?C.gold:C.muted, fontWeight:700, fontSize:12, cursor:"pointer", textTransform:"uppercase", letterSpacing:"0.05em", transition:"all 0.2s" }}>{t}</FeelButton>
         ))}
       </div>
 
@@ -210,13 +211,13 @@ export default function TradeScreen({ cryptos=[] }) {
           </div>
           <div style={{ display:"flex", flexDirection:"column", gap:4 }}>
             {cryptos.slice(0,4).map(c => (
-              <button key={c.symbol} onClick={()=>setFromAsset(c)} style={{ padding:"4px 10px", borderRadius:8, cursor:"pointer", fontSize:11, fontWeight:700, background:fromAsset.symbol===c.symbol?C.goldGlow:"transparent", border:`1px solid ${fromAsset.symbol===c.symbol?C.gold:C.border}`, color:fromAsset.symbol===c.symbol?C.gold:C.muted, transition:"all 0.15s" }}>{c.symbol}</button>
+              <FeelButton key={c.symbol} onClick={()=>setFromAsset(c)} style={{ padding:"4px 10px", borderRadius:8, cursor:"pointer", fontSize:11, fontWeight:700, background:fromAsset.symbol===c.symbol?C.goldGlow:"transparent", border:`1px solid ${fromAsset.symbol===c.symbol?C.gold:C.border}`, color:fromAsset.symbol===c.symbol?C.gold:C.muted, transition:"all 0.15s" }}>{c.symbol}</FeelButton>
             ))}
           </div>
         </div>
         <div style={{ display:"flex", gap:6, marginBottom:12 }}>
           {INTERVALS.map(iv => (
-            <button key={iv} onClick={()=>setIntervalV(iv)} style={{ padding:"4px 12px", borderRadius:8, fontSize:11, fontWeight:700, cursor:"pointer", background:interval===iv?C.gold:"transparent", color:interval===iv?"#000":C.muted, border:`1px solid ${interval===iv?C.gold:"transparent"}`, transition:"all 0.15s" }}>{iv}</button>
+            <FeelButton key={iv} onClick={()=>setIntervalV(iv)} style={{ padding:"4px 12px", borderRadius:8, fontSize:11, fontWeight:700, cursor:"pointer", background:interval===iv?C.gold:"transparent", color:interval===iv?"#000":C.muted, border:`1px solid ${interval===iv?C.gold:"transparent"}`, transition:"all 0.15s" }}>{iv}</FeelButton>
           ))}
         </div>
         <CandlestickChart candles={candles} width={340} height={160} />
@@ -249,10 +250,10 @@ export default function TradeScreen({ cryptos=[] }) {
       </Card>
 
       <div style={{ display:"flex", justifyContent:"center" }}>
-        <button onClick={swapAssets} style={{ width:44, height:44, borderRadius:"50%", background:C.bgElevated, border:`1px solid ${C.borderStrong}`, cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", color:C.gold, fontSize:18, transition:"all 0.2s" }}
+        <FeelButton onClick={swapAssets} style={{ width:44, height:44, borderRadius:"50%", background:C.bgElevated, border:`1px solid ${C.borderStrong}`, cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", color:C.gold, fontSize:18, transition:"all 0.2s" }}
           onMouseEnter={e=>{ e.currentTarget.style.background=C.goldGlow; e.currentTarget.style.transform="rotate(180deg)"; }}
           onMouseLeave={e=>{ e.currentTarget.style.background=C.bgElevated; e.currentTarget.style.transform="rotate(0)"; }}
-        >⇅</button>
+        >⇅</FeelButton>
       </div>
 
       <Card hover={false}>
