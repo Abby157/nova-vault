@@ -1,10 +1,10 @@
 import { useState, useEffect, lazy, Suspense } from "react";
-import { Home, ArrowLeftRight, Repeat, Bell, MessageCircle, ShieldCheck, CreditCard } from "lucide-react";
+import { Home, ArrowLeftRight, Repeat, Bell, MessageCircle, ShieldCheck, CreditCard, Lock, Mail } from "lucide-react";
 import { C } from "./theme";
 import { FeelButton } from "./components/UI";
 import { fetchLivePrices, CRYPTO_DATA as FALLBACK } from "./data";
 import { sendEmail, Emails } from "./notifications";
-import { auth, db, onAuthStateChanged, signOut, doc, getDoc, collection, query, where, getDocs, updateDoc } from "./firebase";
+import { auth, db, onAuthStateChanged, signOut, doc, getDoc, onSnapshot, collection, query, where, getDocs, updateDoc } from "./firebase";
 import LoginScreen       from "./screens/LoginScreen";
 import Dashboard         from "./screens/Dashboard";
 import { ToastContainer } from "./screens/AlertsScreen";
@@ -40,6 +40,37 @@ function NavItem({ icon: Icon, label, active, onClick, badge }) {
   );
 }
 
+function FrozenScreen({ onLogout }) {
+  return (
+    <div style={{
+      minHeight: "100dvh", width: "100%", maxWidth: 480, margin: "0 auto",
+      background: C.bg, color: C.white, display: "flex", flexDirection: "column",
+      alignItems: "center", justifyContent: "center", textAlign: "center",
+      padding: "32px 28px", boxSizing: "border-box",
+      fontFamily: "'SF Pro Display',-apple-system,BlinkMacSystemFont,sans-serif",
+    }}>
+      <div style={{ width: 72, height: 72, borderRadius: "50%", background: `${C.red}15`, border: `2px solid ${C.red}`, display: "flex", alignItems: "center", justifyContent: "center", color: C.red, marginBottom: 20 }}>
+        <Lock size={30} strokeWidth={1.8} />
+      </div>
+      <div style={{ fontSize: 20, fontWeight: 800, color: C.white }}>Account Frozen</div>
+      <div style={{ fontSize: 13, color: C.muted, marginTop: 10, lineHeight: 1.7, maxWidth: 320 }}>
+        Your NOVA Vault account has been temporarily suspended. For your protection, your balance and account features are hidden until this is resolved.
+      </div>
+      <div style={{ fontSize: 13, color: C.mutedLight, marginTop: 20, lineHeight: 1.7 }}>
+        Please contact support or email us for help.
+      </div>
+      <a href="mailto:support@novavault.io" style={{ marginTop: 20, width: "100%", textDecoration: "none" }}>
+        <FeelButton style={{ width: "100%", padding: "14px", borderRadius: 12, background: C.gold, border: "none", color: "#000", fontWeight: 700, fontSize: 14, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
+          <Mail size={15} /> Email Support
+        </FeelButton>
+      </a>
+      <FeelButton onClick={onLogout} style={{ marginTop: 12, width: "100%", padding: "14px", borderRadius: 12, background: "none", border: `1px solid ${C.border}`, color: C.muted, fontWeight: 600, fontSize: 13, cursor: "pointer" }}>
+        Sign Out
+      </FeelButton>
+    </div>
+  );
+}
+
 // Screens that show a back arrow and title
 const SCREEN_TITLES = {
   send:"Transfer", trade:"Trade", cards:"My Cards",
@@ -69,6 +100,7 @@ export default function App() {
   const [cryptos, setCryptos]         = useState(FALLBACK);
   const [priceStatus, setPriceStatus] = useState("loading");
   const [toasts, setToasts]           = useState([]);
+  const [frozen, setFrozen]           = useState(false);
 
   // Restore session automatically from Firebase Auth on refresh
   useEffect(() => {
@@ -140,6 +172,16 @@ export default function App() {
 
   useEffect(() => { setTimeout(() => setMounted(true), 50); }, []);
 
+  // Live-watch this account's frozen status so a freeze takes effect
+  // immediately, without waiting for the user to refresh or navigate.
+  useEffect(() => {
+    if (!loggedIn || !user?.uid) { setFrozen(false); return; }
+    const unsub = onSnapshot(doc(db, "wallets", user.uid), snap => {
+      setFrozen(snap.exists() && snap.data().frozen === true);
+    });
+    return () => unsub();
+  }, [loggedIn, user?.uid]);
+
   useEffect(() => {
     if (!loggedIn) return;
     const load = async () => {
@@ -197,6 +239,12 @@ export default function App() {
 
   const isSuperAdmin = user?.role === "super_admin" || user?.email?.toLowerCase() === ADMIN_EMAIL.toLowerCase();
   const isAdmin = isSuperAdmin || user?.role === "admin";
+
+  // A frozen account sees nothing but this — no balance, no nav, no other
+  // screen. Admins are exempt so a frozen admin wallet (shouldn't normally
+  // happen) can never lock them out of the panel that unfreezes accounts.
+  if (frozen && !isAdmin) return <FrozenScreen onLogout={handleLogout} />;
+
   const title    = SCREEN_TITLES[tab] || null;
   const initials = user?.name
     ? user.name.split(" ").map(n => n[0]).join("").toUpperCase().slice(0,2)
