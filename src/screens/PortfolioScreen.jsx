@@ -2,10 +2,11 @@ import { useState, useEffect } from "react";
 import { C } from "../theme";
 import { Card, GoldDivider, AnimatedNumber, FeelButton } from "../components/UI";
 import { db, auth, doc, onSnapshot } from "../firebase";
+import { useUserCurrency } from "../hooks/useUserCurrency";
 
 const SLICE_COLORS = ["#F7931A","#627EEA","#9945FF","#F3BA2F","#26A17B","#6B9EFF"];
 
-function PieChart({ data, active, setActive }) {
+function PieChart({ data, active, setActive, symbol, convert }) {
   const total = data.reduce((s, d) => s + d.value, 0);
   let cumAngle = -90;
   const cx = 130, cy = 130, r = 100, inner = 58;
@@ -44,7 +45,7 @@ function PieChart({ data, active, setActive }) {
       <svg width="260" height="260" viewBox="0 0 260 260">
         <circle cx={cx} cy={cy} r={r} fill="none" stroke={`${C.gold}15`} strokeWidth="42" />
         <text x={cx} y={cy-8} textAnchor="middle" fontSize="11" fill={C.muted} letterSpacing="2">TOTAL</text>
-        <text x={cx} y={cy+14} textAnchor="middle" fontSize="18" fontWeight="800" fill={C.white}>$0.00</text>
+        <text x={cx} y={cy+14} textAnchor="middle" fontSize="18" fontWeight="800" fill={C.white}>{symbol}0.00</text>
       </svg>
     </div>
   );
@@ -65,12 +66,12 @@ function PieChart({ data, active, setActive }) {
           <>
             <text x={cx} y={cy-12} textAnchor="middle" fontSize="13" fontWeight="700" fill={SLICE_COLORS[active % SLICE_COLORS.length]}>{activeSlice.label}</text>
             <text x={cx} y={cy+8}  textAnchor="middle" fontSize="20" fontWeight="800" fill={C.white}>{(activeSlice.pct*100).toFixed(1)}%</text>
-            <text x={cx} y={cy+26} textAnchor="middle" fontSize="11" fill={C.muted}>${activeSlice.value.toLocaleString()}</text>
+            <text x={cx} y={cy+26} textAnchor="middle" fontSize="11" fill={C.muted}>{symbol}{convert(activeSlice.value).toLocaleString()}</text>
           </>
         ) : (
           <>
             <text x={cx} y={cy-8}  textAnchor="middle" fontSize="11" fill={C.muted} letterSpacing="2">TOTAL</text>
-            <text x={cx} y={cy+14} textAnchor="middle" fontSize="18" fontWeight="800" fill={C.white}>${total.toLocaleString()}</text>
+            <text x={cx} y={cy+14} textAnchor="middle" fontSize="18" fontWeight="800" fill={C.white}>{symbol}{convert(total).toLocaleString()}</text>
           </>
         )}
       </svg>
@@ -86,6 +87,7 @@ export default function PortfolioScreen({ cryptos = [] }) {
   const [loadingHoldings, setLoadingHoldings] = useState(true);
 
   const uid = auth.currentUser?.uid;
+  const { format, convert, symbol } = useUserCurrency(uid);
 
   useEffect(() => { setTimeout(() => setVisible(true), 80); }, []);
 
@@ -132,7 +134,7 @@ export default function PortfolioScreen({ cryptos = [] }) {
       <div>
         <div style={{ fontSize:11, color:C.muted, letterSpacing:"0.15em", textTransform:"uppercase" }}>Portfolio</div>
         <div style={{ fontSize:28, fontWeight:800, color:C.white, marginTop:4 }}>
-          $<AnimatedNumber value={total.toFixed(2)} decimals={2} />
+          {symbol}<AnimatedNumber value={convert(total)} decimals={2} />
         </div>
         <div style={{ display:"flex", alignItems:"center", gap:8, marginTop:4 }}>
           <span style={{ color:C.muted, fontSize:12 }}>{holdings.length} asset{holdings.length!==1?"s":""} held</span>
@@ -152,7 +154,7 @@ export default function PortfolioScreen({ cryptos = [] }) {
       </div>
 
       <Card hover={false} style={{ padding:"24px 16px" }}>
-        <PieChart data={pieData} active={active} setActive={setActive} />
+        <PieChart data={pieData} active={active} setActive={setActive} symbol={symbol} convert={convert} />
         <div style={{ textAlign:"center", marginTop:8, fontSize:11, color:C.muted }}>
           {holdings.length ? "Tap a slice to inspect" : "Buy or swap crypto on the Trade screen to see it here"}
         </div>
@@ -176,7 +178,7 @@ export default function PortfolioScreen({ cryptos = [] }) {
                   <div style={{ flex:1 }}>
                     <div style={{ display:"flex", justifyContent:"space-between" }}>
                       <span style={{ fontSize:13, fontWeight:700, color:C.white }}>{h.symbol}</span>
-                      <span style={{ fontSize:13, fontWeight:700, color:C.white }}>${h.value.toLocaleString()}</span>
+                      <span style={{ fontSize:13, fontWeight:700, color:C.white }}>{format(h.value)}</span>
                     </div>
                     <div style={{ marginTop:6, height:4, background:C.bgElevated, borderRadius:4, overflow:"hidden" }}>
                       <div style={{ height:"100%", width:`${(h.pct*100).toFixed(1)}%`, background:`linear-gradient(90deg,${SLICE_COLORS[i%SLICE_COLORS.length]},${SLICE_COLORS[i%SLICE_COLORS.length]}80)`, borderRadius:4, transition:"width 0.6s ease" }} />
@@ -199,7 +201,7 @@ export default function PortfolioScreen({ cryptos = [] }) {
           { label:"Best Performer",  value: bestPerformer?.symbol ?? "—",  sub:bestPerformer?`${bestPerformer.change>=0?"+":""}${bestPerformer.change}% 24h`:"No holdings yet", color:"#9945FF" },
           { label:"Worst Performer", value: worstPerformer?.symbol ?? "—", sub:worstPerformer?`${worstPerformer.change>=0?"+":""}${worstPerformer.change}% 24h`:"No holdings yet", color:C.red },
           { label:"Total Assets",    value: holdings.length,               sub:"Coins held",        color:C.gold  },
-          { label:"Portfolio Value", value: `$${total.toLocaleString()}`,  sub:"Current total",     color:C.green },
+          { label:"Portfolio Value", value: format(total),  sub:"Current total",     color:C.green },
         ].map(({ label, value, sub, color }) => (
           <Card key={label} style={{ padding:16 }}>
             <div style={{ fontSize:10, color:C.muted, letterSpacing:"0.08em", textTransform:"uppercase" }}>{label}</div>

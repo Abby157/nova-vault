@@ -4,8 +4,7 @@ import { C } from "../theme";
 import { CHART_DATA } from "../data";
 import { Card, GoldDivider, Badge, Sparkline, FeelButton, Reveal, AnimatedNumber } from "../components/UI";
 import { db, auth, doc, setDoc, collection, query, where, onSnapshot, getDocs } from "../firebase";
-import { useSettings } from "../hooks/useSettings";
-import { useCurrency } from "../hooks/useCurrency";
+import { useUserCurrency } from "../hooks/useUserCurrency";
 import { downloadReceipt } from "../utils/receipt";
 
 const ADMIN_EMAIL = "davehack966@gmail.com";
@@ -107,9 +106,8 @@ export default function Dashboard({ setTab, cryptos, user }) {
   const uid     = auth.currentUser?.uid;
   const isAdmin = user?.email?.toLowerCase() === ADMIN_EMAIL.toLowerCase();
 
-  // Currency conversion
-  const { settings: appSettings } = useSettings();
-  const { format, convert, symbol } = useCurrency(appSettings.currency || "USD");
+  // Currency conversion (per-user display preference)
+  const { format, convert, symbol, currencyCode } = useUserCurrency(uid);
 
   useEffect(() => { setTimeout(() => setVisible(true), 100); }, []);
 
@@ -289,7 +287,7 @@ export default function Dashboard({ setTab, cryptos, user }) {
           <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginTop:10 }}>
             <div style={{ display:"flex", alignItems:"center", gap:8 }}>
               <div style={{ width:8, height:8, borderRadius:"50%", background:C.green, boxShadow:`0 0 6px ${C.green}` }} />
-              <span style={{ color:C.muted, fontSize:12 }}>NOVA Vault {appSettings.currency || "USD"} Wallet</span>
+              <span style={{ color:C.muted, fontSize:12 }}>NOVA Vault {currencyCode} Wallet</span>
             </div>
             {isAdmin && (
               <FeelButton onClick={() => setShowEditor(true)} style={{ background:`${C.gold}15`, border:`1px solid ${C.gold}40`, borderRadius:8, padding:"5px 14px", color:C.gold, fontSize:11, fontWeight:700, cursor:"pointer", display:"flex", alignItems:"center", gap:5 }}>

@@ -3,7 +3,7 @@ import { Bell, Fingerprint, Eye, KeyRound, ShieldCheck, Laptop, FileKey, FileTex
 import { C } from "../theme";
 import { Card, GoldDivider, GoldButton, FeelButton } from "../components/UI";
 import { auth, updateProfile, db, doc, getDoc, setDoc } from "../firebase";
-import { useSettings } from "../hooks/useSettings";
+import { useUserCurrency } from "../hooks/useUserCurrency";
 
 const RECOVERY_WORDS = [
   "vault","quantum","shield","nova","golden","trust","secure","prime","wealth","crypto",
@@ -101,12 +101,11 @@ function ActionModal({ title, children, onClose }) {
 }
 
 export default function SettingsScreen({ onLogout, user, setTab }) {
-  const { settings: globalSettings, updateSettings: updateGlobalSettings } = useSettings();
+  const { currencyCode: currency, setCurrencyCode } = useUserCurrency(user?.uid);
 
   const [notifs, setNotifs]         = useState(true);
   const [biometric, setBiometric]   = useState(true);
   const [hideBalance, setHideBalance] = useState(false);
-  const [currency, setCurrency]     = useState(globalSettings.currency || "USD");
   const [displayName, setDisplayName] = useState(user?.name || "");
   const [editing, setEditing]       = useState(false);
   const [saving, setSaving]         = useState(false);
@@ -141,11 +140,6 @@ export default function SettingsScreen({ onLogout, user, setTab }) {
     }
   };
 
-  // Sync currency from global settings (Firestore)
-  useEffect(() => {
-    setCurrency(globalSettings.currency || "USD");
-  }, [globalSettings]);
-
   const showConfirmed = (msg) => {
     setConfirmed(msg);
     setTimeout(() => setConfirmed(""), 3000);
@@ -167,9 +161,8 @@ export default function SettingsScreen({ onLogout, user, setTab }) {
   };
 
   const changeCurrency = async (c) => {
-    setCurrency(c);
     try {
-      await updateGlobalSettings({ currency: c });
+      await setCurrencyCode(c);
       showConfirmed(`Currency set to ${c}`);
     } catch {
       showConfirmed(`Currency set to ${c} (local only)`);

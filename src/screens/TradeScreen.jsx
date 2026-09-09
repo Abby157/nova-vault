@@ -2,10 +2,11 @@ import { useState, useEffect } from "react";
 import { C } from "../theme";
 import { Card, GoldButton, FeelButton } from "../components/UI";
 import { db, auth, doc, onSnapshot, updateDoc, addDoc, collection, serverTimestamp, increment } from "../firebase";
+import { useUserCurrency } from "../hooks/useUserCurrency";
 
 const INTERVALS = ["1H","4H","1D","1W"];
 
-function CandlestickChart({ candles, width=340, height=160 }) {
+function CandlestickChart({ candles, width=340, height=160, symbol="$", convert=(v)=>v }) {
   if (!candles.length) return null;
   const pad = { top:10, bottom:20, left:8, right:40 };
   const chartW = width - pad.left - pad.right;
@@ -24,7 +25,7 @@ function CandlestickChart({ candles, width=340, height=160 }) {
         return (
           <g key={p}>
             <line x1={pad.left} y1={y} x2={width-pad.right} y2={y} stroke={`${C.gold}10`} strokeWidth="1" />
-            <text x={width-pad.right+4} y={y+3} fontSize="8" fill={C.muted}>${price.toFixed(0)}</text>
+            <text x={width-pad.right+4} y={y+3} fontSize="8" fill={C.muted}>{symbol}{convert(price).toFixed(0)}</text>
           </g>
         );
       })}
@@ -75,6 +76,7 @@ export default function TradeScreen({ cryptos=[], user }) {
   const [error, setError]         = useState("");
 
   const uid = auth.currentUser?.uid;
+  const { format, convert, symbol } = useUserCurrency(uid);
 
   useEffect(() => {
     if (cryptos.length) {
@@ -131,7 +133,7 @@ export default function TradeScreen({ cryptos=[], user }) {
         return;
       }
     } else {
-      if (cost > balance) { setError(`Insufficient balance. You have $${balance.toFixed(2)} USD.`); return; }
+      if (cost > balance) { setError(`Insufficient balance. You have ${format(balance)}.`); return; }
     }
 
     setLoading(true); setError(""); setSuccess("");
@@ -173,6 +175,12 @@ export default function TradeScreen({ cryptos=[], user }) {
 
   return (
     <div style={{ display:"flex", flexDirection:"column", gap:16 }}>
+      {/* Trading is temporarily disabled while balance changes move to a
+          server-side flow — the buttons below are intentionally inert. */}
+      <div style={{ background:`${C.gold}10`, border:`1px solid ${C.gold}30`, borderRadius:12, padding:"12px 16px", fontSize:12, color:C.mutedLight, lineHeight:1.6 }}>
+        ⚠️ Buy, Sell, and Swap are temporarily unavailable while we upgrade how balances are secured. Your existing balance and holdings are unaffected.
+      </div>
+
       {/* Tabs */}
       <div style={{ display:"flex", gap:8 }}>
         {["swap","buy","sell"].map(t => (
@@ -182,8 +190,8 @@ export default function TradeScreen({ cryptos=[], user }) {
 
       {/* Balance bar */}
       <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", background:C.bgElevated, border:`1px solid ${C.border}`, borderRadius:10, padding:"10px 16px" }}>
-        <span style={{ fontSize:12, color:C.muted }}>USD Balance</span>
-        <span style={{ fontSize:14, fontWeight:700, color:C.white }}>${balance.toLocaleString("en-US",{minimumFractionDigits:2})}</span>
+        <span style={{ fontSize:12, color:C.muted }}>Balance</span>
+        <span style={{ fontSize:14, fontWeight:700, color:C.white }}>{format(balance)}</span>
       </div>
 
       {/* Holding bar — shows for sell/swap */}
@@ -203,7 +211,7 @@ export default function TradeScreen({ cryptos=[], user }) {
               <span style={{ fontSize:16, fontWeight:800, color:C.white }}>{fromAsset.symbol}/USD</span>
             </div>
             <div style={{ fontSize:22, fontWeight:800, color:C.white, marginTop:4 }}>
-              ${fromAsset.price.toLocaleString("en-US",{minimumFractionDigits:2})}
+              {format(fromAsset.price)}
             </div>
             <div style={{ fontSize:12, fontWeight:600, color:isUp?C.green:C.red, marginTop:2 }}>
               {isUp?"▲":"▼"} {Math.abs(priceChange)}% ({interval})
@@ -220,13 +228,13 @@ export default function TradeScreen({ cryptos=[], user }) {
             <FeelButton key={iv} onClick={()=>setIntervalV(iv)} style={{ padding:"4px 12px", borderRadius:8, fontSize:11, fontWeight:700, cursor:"pointer", background:interval===iv?C.gold:"transparent", color:interval===iv?"#000":C.muted, border:`1px solid ${interval===iv?C.gold:"transparent"}`, transition:"all 0.15s" }}>{iv}</FeelButton>
           ))}
         </div>
-        <CandlestickChart candles={candles} width={340} height={160} />
+        <CandlestickChart candles={candles} width={340} height={160} symbol={symbol} convert={convert} />
         {lastCandle && (
           <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:4, marginTop:10 }}>
             {[["O",lastCandle.open],["H",lastCandle.high],["L",lastCandle.low],["C",lastCandle.close]].map(([label,val]) => (
               <div key={label} style={{ background:C.bgElevated, borderRadius:6, padding:"5px 6px", textAlign:"center" }}>
                 <div style={{ fontSize:9, color:C.muted }}>{label}</div>
-                <div style={{ fontSize:10, fontWeight:700, color:C.white }}>${val.toFixed(0)}</div>
+                <div style={{ fontSize:10, fontWeight:700, color:C.white }}>{symbol}{convert(val).toFixed(0)}</div>
               </div>
             ))}
           </div>
@@ -245,7 +253,7 @@ export default function TradeScreen({ cryptos=[], user }) {
            style={{ flex:1, minWidth:0, width:"100%", background:"none", border:"none", outline:"none", color:C.white, fontSize:24, fontWeight:700, textAlign:"right", boxSizing:"border-box" }} />
         </div>
         <div style={{ fontSize:12, color:C.muted, marginTop:6 }}>
-          ≈ ${usdCost} USD · Holdings: {fromHolding.toFixed(6)} {fromAsset.symbol}
+          ≈ {format(usdCost)} · Holdings: {fromHolding.toFixed(6)} {fromAsset.symbol}
         </div>
       </Card>
 
@@ -271,9 +279,9 @@ export default function TradeScreen({ cryptos=[], user }) {
       <Card hover={false} style={{ padding:"14px 18px" }}>
         {[
           ["Rate",         `1 ${fromAsset.symbol} = ${rate} ${toAsset.symbol}`],
-          ["You Pay",      `$${usdCost} USD`],
+          ["You Pay",      format(usdCost)],
           ["Price Impact", "< 0.01%"],
-          ["Network Fee",  "~$2.40"],
+          ["Network Fee",  `~${format(2.40)}`],
           ["Min. Received",`${toAmount?(parseFloat(toAmount)*0.995).toFixed(6):"0"} ${toAsset.symbol}`],
         ].map(([label,value]) => (
           <div key={label} style={{ display:"flex", justifyContent:"space-between", padding:"5px 0" }}>
@@ -286,8 +294,8 @@ export default function TradeScreen({ cryptos=[], user }) {
       {error  && <div style={{ padding:"12px 16px", borderRadius:10, background:`${C.red}15`,   border:`1px solid ${C.red}40`,   color:C.red,   fontSize:13, fontWeight:600 }}>{error}</div>}
       {success && <div style={{ padding:"12px 16px", borderRadius:10, background:`${C.green}15`, border:`1px solid ${C.green}40`, color:C.green, fontSize:13, fontWeight:600 }}>{success}</div>}
 
-      <GoldButton onClick={handleTrade} disabled={loading||!amount} style={{ width:"100%", padding:"16px" }}>
-        {loading ? "Processing…" : activeTab==="swap" ? "⇄ Confirm Swap" : activeTab==="buy" ? "Buy Now" : "Sell Now"}
+      <GoldButton onClick={handleTrade} disabled style={{ width:"100%", padding:"16px" }}>
+        Temporarily Unavailable
       </GoldButton>
     </div>
   );

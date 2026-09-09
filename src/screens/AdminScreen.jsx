@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import { Users, Clock, Wallet, BarChart3, Banknote, Receipt, UserCog, Settings as SettingsIcon, AlertTriangle, Trash2, UserPlus, Save, Pencil, Lock } from "lucide-react";
 import { C } from "../theme";
 import { Card, GoldDivider, GoldButton, FeelButton } from "../components/UI";
-import { db, collection, query, orderBy, onSnapshot, doc, setDoc, updateDoc, deleteDoc, getDocs, where, addDoc, serverTimestamp, getDoc } from "../firebase";
+import { db, collection, query, orderBy, onSnapshot, doc, setDoc, updateDoc, deleteDoc, getDocs, where, addDoc, serverTimestamp, getDoc, increment } from "../firebase";
 import { useSettings } from "../hooks/useSettings";
 import { sendEmail, Emails } from "../notifications";
 
@@ -222,6 +222,9 @@ function ManageUserModal({ targetUser, allTransactions, allWithdrawals, onClose,
       // Delete wallet doc
       await deleteDoc(doc(db, "wallets", targetUser.uid));
 
+      // Delete the user's profile doc too
+      await deleteDoc(doc(db, "users", targetUser.uid));
+
       // Delete all transactions involving this user
       const txQ1 = query(collection(db,"transactions"), where("fromUid","==",targetUser.uid));
       const txQ2 = query(collection(db,"transactions"), where("toUid","==",targetUser.uid));
@@ -375,7 +378,7 @@ function ManageUserModal({ targetUser, allTransactions, allWithdrawals, onClose,
         <div style={{ background:`${C.red}08`, border:`1px solid ${C.red}30`, borderRadius:12, padding:"14px 16px", marginBottom:16 }}>
           <div style={{ fontSize:12, fontWeight:700, color:C.red, marginBottom:6, display:"flex", alignItems:"center", gap:6 }}><AlertTriangle size={13} /> Danger Zone</div>
           <div style={{ fontSize:11, color:C.mutedLight, lineHeight:1.6, marginBottom:12 }}>
-            Permanently deletes this user's wallet, transactions, withdrawals, and support messages. This cannot be undone.
+            Permanently deletes this user's profile, wallet, transactions, withdrawals, and support messages. This cannot be undone. Note: their login (Firebase Authentication) still needs to be removed separately from the Firebase Console — this button can't do that part.
           </div>
           <FeelButton onClick={handleDelete} disabled={deleting} style={{ width:"100%", padding:"12px", borderRadius:10, background:confirmDelete?C.red:`${C.red}15`, border:`1px solid ${C.red}50`, color:confirmDelete?"#fff":C.red, fontSize:13, fontWeight:700, cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", gap:8 }}>
             {deleting ? "Deleting…" : confirmDelete ? <><AlertTriangle size={15} /> Confirm Delete — This Cannot Be Undone</> : <><Trash2 size={15} /> Delete User Completely</>}
@@ -1040,24 +1043,50 @@ export default function AdminScreen({ user }) {
 
   const approveWithdrawal = async (wdId, userUid) => {
     if (!isSuperAdmin && (!permissions.canViewUsers || !accessibleIds.has(userUid))) return;
-    const approvedAt = new Date();
     const wd = withdrawals.find(w => w.id === wdId);
+    if (!wd || wd.status !== "pending") return;
+
+    // Never approve a withdrawal for more than the user's actual current
+    // balance — re-check live rather than trusting the amount stored on the
+    // withdrawal doc at submission time, since the balance can move.
+    const walletSnap = await getDoc(doc(db, "wallets", wd.uid));
+    const currentBalance = walletSnap.exists() ? (walletSnap.data().usdBalance || 0) : 0;
+    if ((wd.usdValue || 0) > currentBalance) {
+      showConfirmed(`❌ Cannot approve — requested $${(wd.usdValue||0).toLocaleString()} exceeds current balance of $${currentBalance.toLocaleString()}.`);
+      return;
+    }
+
+    const approvedAt = new Date();
     await updateDoc(doc(db, "withdrawals", wdId), { status:"approved", approvedAt });
-    if (wd?.refNumber) {
+    if (wd.refNumber) {
       const txQ = query(collection(db, "transactions"), where("refNumber","==",wd.refNumber));
       const txSnap = await getDocs(txQ);
       txSnap.forEach(async d => {
         await updateDoc(doc(db, "transactions", d.id), { status:"approved", approvedAt });
       });
     }
+
+    // Deduct the withdrawn amount from the user's balance now that it's approved
+    if (wd.uid && wd.usdValue) {
+      await updateDoc(doc(db, "wallets", wd.uid), { usdBalance: increment(-wd.usdValue) });
+    }
+
+    // Email the user that their withdrawal was approved
+    try {
+      await sendEmail(Emails.withdrawalApproved(
+        { email: wd.userEmail, name: wd.userName || "Valued Customer" },
+        wd.amount, wd.currency
+      ));
+    } catch (e) { console.error("Failed to send approval email:", e); }
+
     showConfirmed("✓ Withdrawal approved!");
   };
 
   const rejectWithdrawal = async (wdId, reason) => {
-    const target = withdrawals.find(w => w.id === wdId);
-    if (!isSuperAdmin && (!permissions.canViewUsers || !accessibleIds.has(target?.uid))) return;
-    const rejectedAt = new Date();
     const wd = withdrawals.find(w => w.id === wdId);
+    if (!isSuperAdmin && (!permissions.canViewUsers || !accessibleIds.has(wd?.uid))) return;
+    if (!wd || wd.status !== "pending") return;
+    const rejectedAt = new Date();
     await updateDoc(doc(db, "withdrawals", wdId), { status:"rejected", rejectedAt, rejectionReason: reason });
     if (wd?.refNumber) {
       const txQ = query(collection(db, "transactions"), where("refNumber","==",wd.refNumber));

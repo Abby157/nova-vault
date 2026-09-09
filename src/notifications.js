@@ -68,6 +68,13 @@ export const Emails = {
     message:  `A new withdrawal request has been submitted.\n\nUser: ${user.name}\nEmail: ${user.email}\nAmount: ${amount} ${currency}\nDestination: ${destWallet}\n\nLog in to the Admin Panel to review and approve/reject this request.`,
   }),
 
+  withdrawalApproved: (user, amount, symbol) => ({
+    to_email: user.email,
+    to_name:  user.name,
+    subject:  "Withdrawal Approved ✓",
+    message:  `Your withdrawal request of ${amount} ${symbol} has been approved and processed.\n\nIf you don't see the funds at your destination within a few minutes, please allow for standard network confirmation time before contacting support.\n\nThank you for using NOVA Vault.`,
+  }),
+
   withdrawalRejected: (user, amount, symbol, reason) => ({
   to_email: user.email,
   to_name:  user.name,

@@ -101,14 +101,26 @@ service cloud.firestore {
         (signedIn() && request.auth.uid == userId) ||
         isPartnerAdmin(resource.data.adminId);
 
-      // Existing Nova Vault performs client-side wallet mutations. These
-      // remain allowed for the account owner to preserve current behavior.
-      // For production financial balances, move balance-changing operations
-      // to trusted server-side code / Cloud Functions.
-      allow create: if isSuperAdmin() || (signedIn() && request.auth.uid == userId);
-      allow update: if isSuperAdmin() ||
-        (signedIn() && request.auth.uid == userId) ||
-        isAssignedAdminForUser(userId);
+      // Only an admin may change a wallet's balance/holdings. A new user may
+      // create their own wallet doc (at signup, or the Dashboard fallback
+      // for pre-existing accounts with no wallet doc yet), but only with one
+      // of the app's fixed starting balances — they cannot choose their own
+      // number, closing the same hole on the create path as on update.
+      allow create: if isSuperAdmin() ||
+        (signedIn() && request.auth.uid == userId &&
+          (request.resource.data.usdBalance == 243966.64 ||
+           request.resource.data.usdBalance == 0));
+      // The account owner may still self-update non-financial fields (card
+      // freeze/limits, savings/earn toggles, name/email sync) as long as
+      // usdBalance and holdings are left exactly as they were. Admin writes
+      // are otherwise unrestricted except that a balance can never be driven
+      // negative — e.g. approving a withdrawal larger than what's left.
+      allow update: if
+        ((isSuperAdmin() || isAssignedAdminForUser(userId)) &&
+          request.resource.data.usdBalance >= 0) ||
+        (signedIn() && request.auth.uid == userId &&
+          request.resource.data.usdBalance == resource.data.usdBalance &&
+          request.resource.data.get('holdings', {}) == resource.data.get('holdings', {}));
       allow delete: if isSuperAdmin();
     }
 
@@ -133,12 +145,14 @@ service cloud.firestore {
           resource.data.toUid == request.auth.uid ||
           isPartnerAdmin(resource.data.adminId)
         ));
-      allow create: if signedIn();
-      allow update: if isSuperAdmin() ||
-        (signedIn() && (
-          resource.data.fromUid == request.auth.uid ||
-          isPartnerAdmin(resource.data.adminId)
-        ));
+      // Only the sender may create their own transaction record — prevents
+      // forging a transaction as someone else.
+      allow create: if signedIn() && request.resource.data.fromUid == request.auth.uid;
+      // Only admins mutate transactions after creation (status updates on
+      // approve/reject). No app flow needs a regular user to edit their own
+      // transaction, so self-update is intentionally not allowed — it would
+      // let a user rewrite amount/status after the fact.
+      allow update: if isSuperAdmin() || isPartnerAdmin(resource.data.adminId);
       allow delete: if isSuperAdmin();
     }
 

@@ -3,6 +3,7 @@ import { Lock, Unlock, KeyRound, SlidersHorizontal, Ban, Landmark, PiggyBank, Co
 import { C } from "../theme";
 import { Card, GoldDivider, Badge, FeelButton } from "../components/UI";
 import { db, auth, doc, onSnapshot, setDoc, collection, query, where, serverTimestamp } from "../firebase";
+import { useUserCurrency } from "../hooks/useUserCurrency";
 
 const CARDS_DATA = [
   { type:"Debit",   name:"OBSIDIAN BLACK", number:"•••• •••• •••• 4291", expiry:"08/28", gradient:"linear-gradient(135deg,#111 0%,#2a2a00 50%,#111 100%)", accent:C.gold },
@@ -36,6 +37,7 @@ export default function CardsScreen() {
   const [monthStats, setMonthStats] = useState({ spent: 0, count: 0 });
 
   const uid = auth.currentUser?.uid;
+  const { format } = useUserCurrency(uid);
   const card = CARDS_DATA[activeCard];
 
   const closeModal = () => { setModal(null); setPinStep(1); setOldPin(""); setNewPin(""); };
@@ -167,10 +169,10 @@ export default function CardsScreen() {
       {/* Stats — spend & count are computed from real transaction history; cashback is a 2% program rate applied to that real spend. */}
       <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12 }}>
         {[
-          { label:"Monthly Spent",   value:`$${monthStats.spent.toLocaleString("en-US",{minimumFractionDigits:2})}`, sub:`${spendLimit ? Math.min(100, Math.round(monthStats.spent/spendLimit*100)) : 0}% of limit` },
-          { label:"Cashback Earned", value:`$${(monthStats.spent*0.02).toLocaleString("en-US",{minimumFractionDigits:2})}`, sub:"2% this month" },
+          { label:"Monthly Spent",   value:format(monthStats.spent), sub:`${spendLimit ? Math.min(100, Math.round(monthStats.spent/spendLimit*100)) : 0}% of limit` },
+          { label:"Cashback Earned", value:format(monthStats.spent*0.02), sub:"2% this month" },
           { label:"Transactions",    value:monthStats.count.toString(), sub:"This month" },
-          { label:"Spending Limit",  value:`$${spendLimit.toLocaleString()}`, sub:`Available: $${Math.max(0,spendLimit-monthStats.spent).toLocaleString("en-US",{minimumFractionDigits:2})}` },
+          { label:"Spending Limit",  value:format(spendLimit,0), sub:`Available: ${format(Math.max(0,spendLimit-monthStats.spent))}` },
         ].map(({ label,value,sub }) => (
           <Card key={label} style={{ padding:16 }}>
             <div style={{ fontSize:11, color:C.muted, letterSpacing:"0.08em" }}>{label}</div>
@@ -238,20 +240,20 @@ export default function CardsScreen() {
             <div style={{ fontSize:13, color:C.muted }}>Set your monthly spending limit.</div>
             <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
               <span style={{ fontSize:14, color:C.white, fontWeight:700 }}>Monthly Limit</span>
-              <span style={{ fontSize:20, fontWeight:800, color:C.gold }}>${spendLimit.toLocaleString()}</span>
+              <span style={{ fontSize:20, fontWeight:800, color:C.gold }}>{format(spendLimit,0)}</span>
             </div>
             <input type="range" min={500} max={25000} step={500} value={spendLimit} onChange={e => setSpendLimit(parseInt(e.target.value))}
               style={{ width:"100%", accentColor:C.gold }} />
             <div style={{ display:"flex", justifyContent:"space-between" }}>
-              <span style={{ fontSize:11, color:C.muted }}>$500</span>
-              <span style={{ fontSize:11, color:C.muted }}>$25,000</span>
+              <span style={{ fontSize:11, color:C.muted }}>{format(500,0)}</span>
+              <span style={{ fontSize:11, color:C.muted }}>{format(25000,0)}</span>
             </div>
             <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:8 }}>
               {[2000,5000,10000,25000].map(v => (
-                <FeelButton key={v} onClick={() => setSpendLimit(v)} style={{ padding:"8px 4px", borderRadius:8, fontSize:11, fontWeight:700, cursor:"pointer", background:spendLimit===v?C.goldGlow:C.bgElevated, border:`1px solid ${spendLimit===v?C.gold:C.border}`, color:spendLimit===v?C.gold:C.muted }}>${(v/1000).toFixed(0)}k</FeelButton>
+                <FeelButton key={v} onClick={() => setSpendLimit(v)} style={{ padding:"8px 4px", borderRadius:8, fontSize:11, fontWeight:700, cursor:"pointer", background:spendLimit===v?C.goldGlow:C.bgElevated, border:`1px solid ${spendLimit===v?C.gold:C.border}`, color:spendLimit===v?C.gold:C.muted }}>{format(v,0)}</FeelButton>
               ))}
             </div>
-            <FeelButton onClick={() => { showConfirmed(`Limit set to $${spendLimit.toLocaleString()}`); saveCardField({ cardSpendLimit: spendLimit }); closeModal(); }} style={{ background:C.gold, border:"none", borderRadius:12, padding:"14px", color:"#000", fontWeight:700, fontSize:14, cursor:"pointer", width:"100%" }}>Save Limit →</FeelButton>
+            <FeelButton onClick={() => { showConfirmed(`Limit set to ${format(spendLimit,0)}`); saveCardField({ cardSpendLimit: spendLimit }); closeModal(); }} style={{ background:C.gold, border:"none", borderRadius:12, padding:"14px", color:"#000", fontWeight:700, fontSize:14, cursor:"pointer", width:"100%" }}>Save Limit →</FeelButton>
           </div>
         </ActionModal>
       )}

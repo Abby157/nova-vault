@@ -4,6 +4,7 @@ import { C } from "../theme";
 import { Card, Badge, GoldDivider, FeelButton } from "../components/UI";
 import { db, auth, collection, query, where, onSnapshot } from "../firebase";
 import { downloadReceipt } from "../utils/receipt";
+import { useUserCurrency } from "../hooks/useUserCurrency";
 
 const TYPE_CONFIG = {
   send:       { icon:ArrowUp,      label:"Sent",      color:C.red,   bg:`rgba(231,76,60,0.15)`   },
@@ -14,7 +15,7 @@ const TYPE_CONFIG = {
   withdrawal: { icon:ArrowDown,    label:"Withdrawal", color:C.gold,  bg:C.goldGlow },
 };
 
-function TxRow({ tx, uid, userEmail, onClick, active }) {
+function TxRow({ tx, uid, userEmail, onClick, active, format }) {
   const isReceive  = tx.toUid === uid && tx.type !== "withdrawal" && tx.fromUid !== uid;
   const type       = isReceive ? "receive" : tx.type || "send";
   const cfg        = TYPE_CONFIG[type] || TYPE_CONFIG.send;
@@ -50,7 +51,7 @@ function TxRow({ tx, uid, userEmail, onClick, active }) {
           <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start" }}>
             <span style={{ fontSize:13, fontWeight:700, color:C.white, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap", maxWidth:"55%" }}>{label}</span>
             <span style={{ fontSize:14, fontWeight:800, color:amtColor, flexShrink:0 }}>
-              {sign}${tx.amount?.toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2})}
+              {sign}{format(tx.amount)}
             </span>
           </div>
           <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginTop:4 }}>
@@ -66,7 +67,7 @@ function TxRow({ tx, uid, userEmail, onClick, active }) {
           {[
             ["Reference No.", tx.refNumber || tx.id || "—"],
             ["Type",    cfg.label],
-            ["Amount",  `$${tx.amount?.toLocaleString("en-US",{minimumFractionDigits:2})}`],
+            ["Amount",  format(tx.amount)],
             ["Note",    tx.note||"—"],
             ["Status",  tx.status||"pending"],
             ["From",    tx.fromEmail||"—"],
@@ -89,16 +90,16 @@ function TxRow({ tx, uid, userEmail, onClick, active }) {
   );
 }
 
-function SummaryBar({ txs, uid }) {
+function SummaryBar({ txs, uid, format }) {
   const totIn  = txs.filter(t => t.toUid===uid && t.fromUid!==uid && t.type!=="withdrawal").reduce((s,t)=>s+t.amount,0);
   const totOut = txs.filter(t => t.fromUid===uid && t.toUid!==uid).reduce((s,t)=>s+t.amount,0);
   const net    = totIn - totOut;
   return (
     <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:8 }}>
       {[
-        { label:"Total In",  value:`+$${totIn.toLocaleString("en-US",{minimumFractionDigits:0})}`,  color:"#2ECC71" },
-        { label:"Total Out", value:`-$${totOut.toLocaleString("en-US",{minimumFractionDigits:0})}`, color:C.red },
-        { label:"Net",       value:`${net>=0?"+":"-"}$${Math.abs(net).toLocaleString("en-US",{minimumFractionDigits:0})}`, color:net>=0?"#2ECC71":C.red },
+        { label:"Total In",  value:`+${format(totIn,0)}`,  color:"#2ECC71" },
+        { label:"Total Out", value:`-${format(totOut,0)}`, color:C.red },
+        { label:"Net",       value:`${net>=0?"+":"-"}${format(Math.abs(net),0)}`, color:net>=0?"#2ECC71":C.red },
       ].map(({ label,value,color }) => (
         <Card key={label} style={{ padding:"12px 10px", textAlign:"center" }}>
           <div style={{ fontSize:10, color:C.muted, letterSpacing:"0.08em", textTransform:"uppercase" }}>{label}</div>
@@ -119,6 +120,7 @@ export default function TransactionScreen() {
 
   const uid = auth.currentUser?.uid;
   const userEmail = auth.currentUser?.email;
+  const { format } = useUserCurrency(uid);
 
   // Load real transactions from Firestore
   useEffect(() => {
@@ -192,7 +194,7 @@ export default function TransactionScreen() {
       </div>
 
       {/* Summary */}
-      <SummaryBar txs={transactions} uid={uid} />
+      <SummaryBar txs={transactions} uid={uid} format={format} />
 
       {/* Search */}
       <div style={{ position:"relative" }}>
@@ -232,7 +234,7 @@ export default function TransactionScreen() {
             <Card hover={false} style={{ padding:0, overflow:"hidden" }}>
               {txs.map((tx, i) => (
                 <div key={tx.id}>
-                  <TxRow tx={tx} uid={uid} userEmail={userEmail} active={activeId===tx.id} onClick={()=>setActiveId(activeId===tx.id?null:tx.id)} />
+                  <TxRow tx={tx} uid={uid} userEmail={userEmail} active={activeId===tx.id} onClick={()=>setActiveId(activeId===tx.id?null:tx.id)} format={format} />
                   {i<txs.length-1&&<GoldDivider margin="0 18px" />}
                 </div>
               ))}
