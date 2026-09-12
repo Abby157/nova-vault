@@ -348,7 +348,7 @@ export default function Dashboard({ setTab, cryptos, user }) {
                       <span style={{ fontSize:14, fontWeight:700, color:C.white }}>{format(c.price*c.heldBalance)}</span>
                     </div>
                     <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginTop:4 }}>
-                      <span style={{ fontSize:12, color:C.muted }}>{c.heldBalance.toFixed(6)} {c.symbol}</span>
+                      <span style={{ fontSize:12, color:C.muted }}>{c.heldBalance.toFixed(6)} {c.symbol} · {format(c.price)}/coin</span>
                       <PctPill value={c.change} />
                     </div>
                   </div>
