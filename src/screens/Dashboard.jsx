@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { ArrowUp, ArrowDown, RefreshCw, PieChart, ArrowUpRight, ArrowDownRight, Settings as SettingsIcon, ChevronDown, FileText } from "lucide-react";
+import { ArrowUp, ArrowDown, RefreshCw, PieChart, ArrowUpRight, ArrowDownRight, Settings as SettingsIcon, ChevronDown, FileText, Banknote } from "lucide-react";
 import { C } from "../theme";
 import { CHART_DATA } from "../data";
 import { Card, GoldDivider, Badge, Sparkline, FeelButton, Reveal, AnimatedNumber } from "../components/UI";
@@ -209,7 +209,7 @@ export default function Dashboard({ setTab, cryptos, user }) {
   };
 
   const QUICK_ACTIONS = [
-    { Icon: ArrowUp,   label:"Send",      tab:"send" },
+    { Icon: Banknote,  label:"Withdraw",  tab:"withdraw" },
     { Icon: ArrowDown, label:"Receive",   tab:"send" },
     { Icon: RefreshCw, label:"Swap",      tab:"trade" },
     { Icon: PieChart,  label:"Portfolio", tab:"portfolio" },

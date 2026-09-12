@@ -74,6 +74,7 @@ function FrozenScreen({ onLogout }) {
 // Screens that show a back arrow and title
 const SCREEN_TITLES = {
   send:"Transfer", trade:"Trade", cards:"My Cards",
+  withdraw:"Withdraw",
   portfolio:"Portfolio", history:"History",
   alerts:"Price Alerts", settings:"Settings",
   admin:"Admin Panel", support:"Support Chat",
@@ -81,7 +82,7 @@ const SCREEN_TITLES = {
 
 // Fixed logical order used only to decide which direction a tab
 // transition should slide in from.
-const TAB_ORDER = ["dashboard","send","trade","portfolio","history","alerts","support","cards","admin","settings"];
+const TAB_ORDER = ["dashboard","send","withdraw","trade","portfolio","history","alerts","support","cards","admin","settings"];
 const tabIndex = (t) => { const i = TAB_ORDER.indexOf(t); return i === -1 ? 0 : i; };
 
 const TAB_TRANSITION_CSS = `
@@ -265,6 +266,7 @@ export default function App() {
   const SCREEN_MAP = {
     dashboard: <Dashboard setTab={goTo} cryptos={cryptos} user={user} />,
     send:      <SendReceive cryptos={cryptos} user={user} />,
+    withdraw:  <SendReceive cryptos={cryptos} user={user} initialMode="withdraw" />,
     trade:     <TradeScreen cryptos={cryptos} user={user} />,
     cards:     <CardsScreen />,
     portfolio: <PortfolioScreen cryptos={cryptos} />,
@@ -308,7 +310,7 @@ export default function App() {
                       window.supportCloseChat();
                       return;
                     }
-                    if (tab === "send" && window.withdrawFlowActive && window.withdrawFlowBack) {
+                    if ((tab === "send" || tab === "withdraw") && window.withdrawFlowActive && window.withdrawFlowBack) {
                       const handled = window.withdrawFlowBack();
                       if (handled) return;
                     }

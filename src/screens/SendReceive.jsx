@@ -514,13 +514,13 @@ function WithdrawFlow({ cryptos, onBack, user }) {
 }
 
 // ── Main SendReceive ──────────────────────────────────────────────
-export default function SendReceive({ cryptos=[], user }) {
-  const [mode, setMode]                 = useState("send");
+export default function SendReceive({ cryptos=[], user, initialMode }) {
+  const [mode, setMode]                 = useState(initialMode || "send");
   const [toEmail, setToEmail]           = useState("");
   const [amount, setAmount]             = useState("");
   const [note, setNote]                 = useState("");
   const [step, setStep]                 = useState(1);
-  const [showWithdraw, setShowWithdraw] = useState(false);
+  const [showWithdraw, setShowWithdraw] = useState(initialMode === "withdraw");
   const [loading, setLoading]           = useState(false);
   const [error, setError]               = useState("");
   const [success, setSuccess]           = useState(false);
