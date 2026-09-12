@@ -10,8 +10,11 @@ const COINGECKO_IDS = {
 
 export async function fetchLivePrices() {
   const ids = Object.values(COINGECKO_IDS).join(",");
-  const url = `https://api.coingecko.com/api/v3/simple/price?ids=${ids}&vs_currencies=usd&include_24hr_change=true`;
-  const res  = await fetch(url);
+  // CoinGecko's response is cacheable for up to a minute (max-age=30,
+  // s-maxage=60) — a cache-busting param plus no-store keeps the browser
+  // from silently reusing an old quote as if it were fresh.
+  const url = `https://api.coingecko.com/api/v3/simple/price?ids=${ids}&vs_currencies=usd&include_24hr_change=true&_=${Date.now()}`;
+  const res  = await fetch(url, { cache: "no-store" });
   const json = await res.json();
 
   return CRYPTO_DATA.map(coin => {

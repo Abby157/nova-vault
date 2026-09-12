@@ -190,7 +190,9 @@ export default function App() {
       catch { setPriceStatus("error"); }
     };
     load();
-    const iv = setInterval(load, 60000);
+    // CoinGecko's own quote is only guaranteed fresh for ~30s — polling
+    // any slower than that just re-requests inside its cache window.
+    const iv = setInterval(load, 30000);
     return () => clearInterval(iv);
   }, [loggedIn]);
 
